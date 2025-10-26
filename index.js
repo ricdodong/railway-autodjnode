@@ -64,13 +64,13 @@ let lastKnownListeners = null;  // integer or null
 
 // ---- Utilities ----
 function sanitizeFilename(name) {
-  return name
-    .replace(/[\u0000-\u001f<>:"/\\|?*\u007f]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .replace(/^\.+/, '')
-    .slice(0, 200);
-}
+    return name
+      .replace(/[\/\\|&<>:"*?]/g, '-')  // remove special chars
+      .replace(/[\u0000-\u001f]/g, '')  // remove control chars
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 200);
+  }
 
 function cleanTitle(raw) {
   if (!raw) return raw || '';
@@ -89,6 +89,14 @@ function cleanTitle(raw) {
   s = s.trim();
   return s.length ? s : raw.trim();
 }
+
+function sanitizeForFfmpeg(str) {
+    if (!str) return '';
+    return str
+      .replace(/[\/\\|&<>:"*?]/g, '-')   // replace / \ | & < > : " * ? with dash
+      .replace(/\s{2,}/g, ' ')           // collapse multiple spaces
+      .trim();
+  }
 
 function runCmdCapture(cmd, args, opts = {}) {
   return new Promise((resolve, reject) => {
@@ -280,25 +288,23 @@ async function streamCachedMp3ToIcecast(mp3Path, title) {
       else console.log('Icecast metadata admin update not allowed or failed.');
     });
   
-    // Escape quotes for ffmpeg
-    const safeTitle = title.replace(/"/g, '\\"');
-    const safeArtist = STATION_NAME.replace(/"/g, '\\"');
-  
-    // Wrap paths in quotes
+    const safeTitle = sanitizeForFfmpeg(title);
+    const safeArtist = sanitizeForFfmpeg(STATION_NAME);
+    
     const ffargs = [
       '-re',
       '-hide_banner',
       '-loglevel', 'warning',
-      '-i', mp3Path, // input path should be quoted if contains spaces
+      '-i', mp3Path,
       '-vn',
-      '-metadata', `title="${safeTitle}"`,
-      '-metadata', `artist="${safeArtist}"`,
+      '-metadata', `title=${safeTitle}`,
+      '-metadata', `artist=${safeArtist}`,
       '-c:a', 'copy',
       '-content_type', 'audio/mpeg',
       '-f', 'mp3',
       icecastUrl()
     ];
-  
+     
     console.log('Launching ffmpeg with args:', ffargs.join(' '));
   
     return new Promise((resolve) => {
