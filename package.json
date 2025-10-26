@@ -1,0 +1,11 @@
+{
+    "name": "ric-youtube-autodj",
+    "version": "1.0.0",
+    "description": "AutoDJ that streams YouTube audio to Icecast",
+    "main": "index.js",
+    "scripts": {
+      "start": "node index.js"
+    },
+    "dependencies": {}
+  }
+  

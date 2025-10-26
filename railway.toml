@@ -1,0 +1,12 @@
+[build]
+builder = "docker"
+
+[deploy]
+startCommand = "npm start"
+restartPolicyType = "on-failure"
+restartPolicyMaxRetries = 10
+
+[env]
+BITRATE = "128k"
+SOURCES_FILE = "sources.txt"
+CACHE_DIR = "/app/cache"
