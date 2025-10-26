@@ -43,7 +43,7 @@ const ICECAST_ADMIN_PASS = process.env.ICECAST_ADMIN_PASS || ICECAST_PASS;
 
 const BITRATE = process.env.BITRATE || '128k';
 const SOURCES_FILE = process.env.SOURCES_FILE || 'sources.txt';
-const COOKIES_PATH = process.env.COOKIES_PATH || '/app/secrets/cookies.txt';
+const COOKIES_PATH = process.env.COOKIES_FILE || '/app/secrets/cookies.txt';
 const CACHE_DIR = process.env.CACHE_DIR || path.join(process.cwd(), 'cache');
 const TMP_DIR = path.join(process.cwd(), 'tmp');
 const PORT = parseInt(process.env.PORT || '3000', 10);
