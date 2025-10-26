@@ -1,5 +1,5 @@
 /**
- * index.js — AutoDJ with status endpoint
+ * index.js — AutoDJ with status endpoint (playlist expansion)
  *
  * Features:
  *  - sources.txt playlist (one URL per line, '#' for comments)
@@ -7,7 +7,7 @@
  *  - convert once (yt-dlp -> tmp -> ffmpeg -> mp3 cache)
  *  - stream cached mp3 to Icecast via ffmpeg (copy mode, -re)
  *  - update Icecast metadata via admin endpoint (best-effort)
- *  - /status endpoint on PORT (default 3000) returning now_playing, bitrate, listeners, yt info
+ *  - /status endpoint on PORT (default 3000) returning now_playing, bitrate, listeners
  *
  * ENV:
  *   ICECAST_HOST, ICECAST_PORT, ICECAST_MOUNT, ICECAST_USER, ICECAST_PASS (or ICECAST_PASSWORD)
@@ -58,12 +58,9 @@ if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
 if (!fs.existsSync(TMP_DIR)) fs.mkdirSync(TMP_DIR, { recursive: true });
 
 // ---- Globals ----
-let nowPlaying = null;          // "Artist - Title" string
-let nowPlayingUpdated = null;   // timestamp ms
-let lastKnownListeners = null;  // integer or null
-
-// store last yt-dlp output (JSON or HTML)
-let lastYtOutput = {};
+let nowPlaying = null;
+let nowPlayingUpdated = null;
+let lastKnownListeners = null;
 
 // ---- Utilities ----
 function sanitizeFilename(name) {
@@ -125,18 +122,8 @@ async function fetchYtMeta(url) {
     const args = ['-j', '--no-warnings', url];
     if (fs.existsSync(COOKIES_PATH)) args.unshift('--cookies', COOKIES_PATH);
     const res = await runCmdCapture('yt-dlp', args);
-    lastYtOutput = { last_url: url, raw_json: JSON.parse(res.out) };
     return JSON.parse(res.out);
   } catch (e) {
-    // fallback: capture raw HTML if JSON fails
-    try {
-      const argsHtml = ['--no-warnings', '--skip-download', '--print', 'webpage_url', url];
-      if (fs.existsSync(COOKIES_PATH)) argsHtml.unshift('--cookies', COOKIES_PATH);
-      const htmlRes = await runCmdCapture('yt-dlp', argsHtml);
-      lastYtOutput = { last_url: url, raw_html: htmlRes.out };
-    } catch (htmlErr) {
-      lastYtOutput = { last_url: url, error: e.message || e };
-    }
     throw new Error('yt-dlp metadata fetch failed: ' + (e.message || e));
   }
 }
@@ -197,7 +184,6 @@ function updateIcecastMetadata(nowPlayingTitle) {
   });
 }
 
-// Fetch listener count from /admin/stats
 function fetchIcecastListeners() {
   return new Promise((resolve) => {
     try {
@@ -223,31 +209,86 @@ function fetchIcecastListeners() {
             const match = data.match(regex);
             if (!match) {
               const alt = data.match(/<listeners>\s*(\d+)\s*<\/listeners>/i);
-              if (alt) resolve(parseInt(alt[1], 10));
-              else resolve(null);
+              resolve(alt ? parseInt(alt[1], 10) : null);
               return;
             }
             const sourceBlock = match[1];
             const lis = sourceBlock.match(/<listeners>\s*(\d+)\s*<\/listeners>/i);
-            if (lis) resolve(parseInt(lis[1], 10));
-            else resolve(null);
-          } catch (err) {
-            resolve(null);
-          }
+            resolve(lis ? parseInt(lis[1], 10) : null);
+          } catch (err) { resolve(null); }
         });
       });
       req.on('error', () => resolve(null));
       req.on('timeout', () => { req.destroy(); resolve(null); });
       req.end();
-    } catch (e) {
-      resolve(null);
-    }
+    } catch (e) { resolve(null); }
   });
 }
 
 function escapeRegExp(string) {
   return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
+
+// ---- Playlist expansion ----
+async function expandPlaylist(url) {
+  try {
+    const args = ['--flat-playlist', '-j', url];
+    if (fs.existsSync(COOKIES_PATH)) args.unshift('--cookies', COOKIES_PATH);
+    const res = await runCmdCapture('yt-dlp', args);
+    const lines = res.out.split(/\r?\n/).filter(Boolean);
+    const videoUrls = lines.map(line => {
+      try { const obj = JSON.parse(line); return obj.url ? 'https://www.youtube.com/watch?v=' + obj.url : null; }
+      catch { return null; }
+    }).filter(Boolean);
+    return videoUrls;
+  } catch (e) {
+    console.error('Playlist expansion failed:', e.message || e);
+    return [url];
+  }
+}
+
+async function loadQueue() {
+  let arr = [];
+  const pl = process.env.YOUTUBE_PLAYLIST;
+  if (pl) arr.push(pl);
+
+  if (fs.existsSync(SOURCES_FILE)) {
+    const lines = fs.readFileSync(SOURCES_FILE, 'utf8')
+      .split(/\r?\n/)
+      .map(l => l.trim())
+      .filter(Boolean)
+      .filter(l => !l.startsWith('#'));
+    arr.push(...lines);
+  }
+
+  if (arr.length === 0) {
+    console.error('No sources found in', SOURCES_FILE, 'and no YOUTUBE_PLAYLIST set. Exiting.');
+    process.exit(1);
+  }
+
+  const expanded = [];
+  for (let url of arr) {
+    if (url.includes('youtube.com/playlist?')) {
+      const vids = await expandPlaylist(url);
+      expanded.push(...vids);
+    } else {
+      expanded.push(url);
+    }
+  }
+
+  return expanded;
+}
+
+function shuffle(arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+}
+
+let stopping = false;
+process.on('SIGINT', () => { console.log('SIGINT'); stopping = true; });
+process.on('SIGTERM', () => { console.log('SIGTERM'); stopping = true; });
 
 // ---- Playback logic ----
 async function ensureCachedMp3ForUrl(url) {
@@ -271,23 +312,25 @@ async function ensureCachedMp3ForUrl(url) {
 async function streamCachedMp3ToIcecast(mp3Path, title) {
   nowPlaying = title;
   nowPlayingUpdated = Date.now();
+
   updateIcecastMetadata(title).then(ok => {
-    if (ok) console.log('Icecast metadata updated (admin).');
-    else console.log('Icecast metadata admin update not allowed or failed.');
+    console.log(ok ? 'Icecast metadata updated (admin).' : 'Icecast metadata admin update failed.');
   });
 
   return new Promise((resolve) => {
     const ffargs = [
       '-re', '-hide_banner', '-loglevel', 'warning',
-      '-i', mp3Path, '-vn',
+      '-i', mp3Path,
+      '-vn',
       '-metadata', `title=${title}`,
-      '-c:a', 'copy', '-content_type', 'audio/mpeg',
-      '-f', 'mp3', icecastUrl()
+      '-c:a', 'copy',
+      '-content_type', 'audio/mpeg',
+      '-f', 'mp3',
+      icecastUrl()
     ];
     console.log('Launching ffmpeg with args:', ffargs.join(' '));
     const ff = spawn('ffmpeg', ffargs, { stdio: ['ignore', 'inherit', 'inherit'] });
-
-    ff.on('error', (e) => { console.error('ffmpeg error:', e?.message || e); resolve(); });
+    ff.on('error', (e) => { console.error('ffmpeg error:', e.message || e); resolve(); });
     ff.on('exit', (code, sig) => { console.log(`ffmpeg exited ${code || ''} ${sig || ''}`); resolve(); });
   });
 }
@@ -299,48 +342,24 @@ async function playUrl(url) {
     console.log('Now playing:', info.title);
     await streamCachedMp3ToIcecast(info.path, info.title);
   } catch (err) {
-    console.error('playUrl error:', err?.message || err);
+    console.error('playUrl error:', err.message || err);
     await new Promise(r => setTimeout(r, 4000));
   }
 }
 
-// ---- Queue loader & main loop ----
-function loadQueue() {
-  const arr = [];
-  const pl = process.env.YOUTUBE_PLAYLIST;
-  if (pl) arr.push(pl);
-  if (fs.existsSync(SOURCES_FILE)) {
-    const lines = fs.readFileSync(SOURCES_FILE, 'utf8')
-      .split(/\r?\n/).map(l => l.trim()).filter(Boolean).filter(l => !l.startsWith('#'));
-    arr.push(...lines);
-  }
-  if (!arr.length) {
-    console.error('No sources found in', SOURCES_FILE, 'and no YOUTUBE_PLAYLIST set. Exiting.');
-    process.exit(1);
-  }
-  return arr;
-}
-
-function shuffle(arr) {
-  for (let i = arr.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [arr[i], arr[j]] = [arr[j], arr[i]];
-  }
-}
-
-let stopping = false;
-process.on('SIGINT', () => { console.log('SIGINT'); stopping = true; });
-process.on('SIGTERM', () => { console.log('SIGTERM'); stopping = true; });
-
+// ---- Main loop ----
 async function mainLoop() {
   while (!stopping) {
     try {
-      const q = loadQueue();
+      const q = await loadQueue();
       shuffle(q);
-      for (let i = 0; i < q.length && !stopping; i++) await playUrl(q[i]);
+      for (let i = 0; i < q.length && !stopping; i++) {
+        console.log(`Queue item ${i+1}/${q.length}: ${q[i]}`);
+        await playUrl(q[i]);
+      }
       await new Promise(r => setTimeout(r, 1000));
     } catch (e) {
-      console.error('Main loop error:', e?.message || e);
+      console.error('Main loop error:', e.message || e);
       await new Promise(r => setTimeout(r, 5000));
     }
   }
@@ -350,10 +369,7 @@ async function mainLoop() {
 // ---- Status server ----
 async function updateListenersPeriodically() {
   while (!stopping) {
-    try {
-      const n = await fetchIcecastListeners();
-      lastKnownListeners = (n !== null && typeof n === 'number') ? n : null;
-    } catch { lastKnownListeners = null; }
+    try { lastKnownListeners = await fetchIcecastListeners(); } catch { lastKnownListeners = null; }
     await new Promise(r => setTimeout(r, 10000));
   }
 }
@@ -366,31 +382,10 @@ const server = http.createServer((req, res) => {
       now_playing: nowPlaying || null,
       bitrate: bitrateNum,
       listeners: lastKnownListeners,
-      updated: nowPlayingUpdated || Date.now(),
-      yt: lastYtOutput
+      updated: nowPlayingUpdated || Date.now()
     };
-    res
-    .writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify(payload, null, 2));
-  } else if (req.url === '/status/html') {
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-    let htmlContent = `<h1>${STATION_NAME} Status</h1>`;
-    htmlContent += `<p>Now Playing: ${nowPlaying || 'None'}</p>`;
-    htmlContent += `<p>Bitrate: ${BITRATE}</p>`;
-    htmlContent += `<p>Listeners: ${lastKnownListeners ?? 0}</p>`;
-    htmlContent += `<p>Updated: ${new Date(nowPlayingUpdated || Date.now()).toLocaleString()}</p>`;
-    if (lastYtOutput) {
-      htmlContent += `<h2>YouTube Info</h2>`;
-      htmlContent += `<p>Last URL: <a href="${lastYtOutput.last_url}" target="_blank">${lastYtOutput.last_url}</a></p>`;
-      if (lastYtOutput.raw_json) {
-        htmlContent += `<pre>${JSON.stringify(lastYtOutput.raw_json, null, 2)}</pre>`;
-      } else if (lastYtOutput.raw_html) {
-        htmlContent += `<pre>${escapeHtml(lastYtOutput.raw_html)}</pre>`;
-      } else if (lastYtOutput.error) {
-        htmlContent += `<p style="color:red">Error: ${escapeHtml(lastYtOutput.error)}</p>`;
-      }
-    }
-    res.end(htmlContent);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(payload));
   } else if (req.url === '/' || req.url === '/health') {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
     res.end('ok');
@@ -400,22 +395,10 @@ const server = http.createServer((req, res) => {
   }
 });
 
-function escapeHtml(unsafe) {
-  return unsafe
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
-}
-
 server.listen(PORT, () => {
-  console.log(`Status server listening on port ${PORT} (GET /status or /status/html)`);
+  console.log(`Status server listening on port ${PORT} (GET /status)`);
 });
 
-// Kick off loops
+// Kick off
 updateListenersPeriodically().catch(() => {});
-mainLoop().catch(err => {
-  console.error('Fatal:', err);
-  process.exit(1);
-});
+mainLoop().catch(err => { console.error('Fatal:', err); process.exit(1); });
