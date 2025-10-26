@@ -20,15 +20,13 @@ RUN npm install --omit=dev
 COPY . .
 
 # Copy entrypoint and ensure executable
-COPY entrypoint.sh /entrypoint.sh
+COPY entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /entrypoint.sh
-RUN mkdir -p /app/secrets
-
 # Location of cookies file (used by yt-dlp + index.js)
 ENV COOKIES_PATH="/app/secrets/cookies.txt"
 
 # ENTRYPOINT runs first and prepares cookies
-ENTRYPOINT ["/entrypoint.sh"]
+ENTRYPOINT ["/app/entrypoint.sh"]
 
 # Then run Node after init
 CMD ["node", "index.js"]
