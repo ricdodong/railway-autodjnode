@@ -1,5 +1,5 @@
 /**
- * index.js — AutoDJ with status endpoint + yt-dlp debug display
+ * index.js — AutoDJ with status endpoint
  *
  * Features:
  *  - sources.txt playlist (one URL per line, '#' for comments)
@@ -37,6 +37,7 @@ if (!ICECAST_MOUNT.startsWith('/')) ICECAST_MOUNT = '/' + ICECAST_MOUNT;
 
 const ICECAST_USER = process.env.ICECAST_USER || 'source';
 const ICECAST_PASS = process.env.ICECAST_PASS || process.env.ICECAST_PASSWORD || '';
+
 const ICECAST_ADMIN_USER = process.env.ICECAST_ADMIN_USER || ICECAST_USER;
 const ICECAST_ADMIN_PASS = process.env.ICECAST_ADMIN_PASS || ICECAST_PASS;
 
@@ -49,7 +50,7 @@ const PORT = parseInt(process.env.PORT || '3000', 10);
 const STATION_NAME = process.env.STATION_NAME || 'AutoDJ Live';
 
 if (!ICECAST_HOST) {
-  console.error('ERROR: ICECAST_HOST is not set. Set it in env.');
+  console.error('ERROR: ICECAST_HOST is not set. Set it in env (Railway variables).');
   process.exit(1);
 }
 
@@ -57,10 +58,12 @@ if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
 if (!fs.existsSync(TMP_DIR)) fs.mkdirSync(TMP_DIR, { recursive: true });
 
 // ---- Globals ----
-let nowPlaying = null;
-let nowPlayingUpdated = null;
-let lastKnownListeners = null;
-let lastYtOutput = null; // store last yt-dlp JSON/HTML for /status
+let nowPlaying = null;          // "Artist - Title" string
+let nowPlayingUpdated = null;   // timestamp ms
+let lastKnownListeners = null;  // integer or null
+
+// store last yt-dlp output (JSON or HTML)
+let lastYtOutput = {};
 
 // ---- Utilities ----
 function sanitizeFilename(name) {
@@ -97,7 +100,7 @@ function runCmdCapture(cmd, args, opts = {}) {
     let err = '';
     if (p.stdout) p.stdout.on('data', d => out += d.toString());
     if (p.stderr) p.stderr.on('data', d => err += d.toString());
-    p.on('error', e => reject(e));
+    p.on('error', (e) => reject(e));
     p.on('exit', (code, sig) => {
       if (code === 0) resolve({ out, err });
       else reject(new Error(`${cmd} ${args.join(' ')} exited ${code} ${sig || ''}\n${err}`));
@@ -108,7 +111,7 @@ function runCmdCapture(cmd, args, opts = {}) {
 function runCmdDetached(cmd, args, opts = {}) {
   return new Promise((resolve, reject) => {
     const p = spawn(cmd, args, Object.assign({ stdio: ['ignore', 'inherit', 'inherit'] }, opts));
-    p.on('error', e => reject(e));
+    p.on('error', (e) => reject(e));
     p.on('exit', (code, sig) => {
       if (code === 0) resolve({ code, sig });
       else reject(new Error(`${cmd} ${args.join(' ')} exited ${code} ${sig || ''}`));
@@ -125,7 +128,15 @@ async function fetchYtMeta(url) {
     lastYtOutput = { last_url: url, raw_json: JSON.parse(res.out) };
     return JSON.parse(res.out);
   } catch (e) {
-    lastYtOutput = { last_url: url, error: e.message || e };
+    // fallback: capture raw HTML if JSON fails
+    try {
+      const argsHtml = ['--no-warnings', '--skip-download', '--print', 'webpage_url', url];
+      if (fs.existsSync(COOKIES_PATH)) argsHtml.unshift('--cookies', COOKIES_PATH);
+      const htmlRes = await runCmdCapture('yt-dlp', argsHtml);
+      lastYtOutput = { last_url: url, raw_html: htmlRes.out };
+    } catch (htmlErr) {
+      lastYtOutput = { last_url: url, error: e.message || e };
+    }
     throw new Error('yt-dlp metadata fetch failed: ' + (e.message || e));
   }
 }
@@ -157,7 +168,7 @@ function icecastUrl() {
 }
 
 function updateIcecastMetadata(nowPlayingTitle) {
-  return new Promise(resolve => {
+  return new Promise((resolve) => {
     try {
       const song = encodeURIComponent(nowPlayingTitle || '');
       const pathStr = `/admin/metadata?mount=${encodeURIComponent(ICECAST_MOUNT)}&mode=updinfo&song=${song}`;
@@ -172,11 +183,11 @@ function updateIcecastMetadata(nowPlayingTitle) {
         timeout: 4000
       };
       const useHttps = (ICECAST_PORT == '443' || ICECAST_PORT == 443);
-      const req = (useHttps ? https : http).request(opts, res => {
+      const req = (useHttps ? https : http).request(opts, (res) => {
         res.on('data', () => {});
         res.on('end', () => resolve(true));
       });
-      req.on('error', e => { console.warn('Icecast metadata update failed:', e.message); resolve(false); });
+      req.on('error', (e) => { console.warn('Icecast metadata update failed:', e.message); resolve(false); });
       req.on('timeout', () => { req.destroy(); resolve(false); });
       req.end();
     } catch (e) {
@@ -186,8 +197,9 @@ function updateIcecastMetadata(nowPlayingTitle) {
   });
 }
 
+// Fetch listener count from /admin/stats
 function fetchIcecastListeners() {
-  return new Promise(resolve => {
+  return new Promise((resolve) => {
     try {
       const pathStr = `/admin/stats`;
       const opts = {
@@ -201,7 +213,7 @@ function fetchIcecastListeners() {
         timeout: 4000
       };
       const useHttps = (ICECAST_PORT == '443' || ICECAST_PORT == 443);
-      const req = (useHttps ? https : http).request(opts, res => {
+      const req = (useHttps ? https : http).request(opts, (res) => {
         let data = '';
         res.on('data', d => data += d.toString());
         res.on('end', () => {
@@ -264,23 +276,18 @@ async function streamCachedMp3ToIcecast(mp3Path, title) {
     else console.log('Icecast metadata admin update not allowed or failed.');
   });
 
-  return new Promise(resolve => {
+  return new Promise((resolve) => {
     const ffargs = [
-      '-re',
-      '-hide_banner',
-      '-loglevel', 'warning',
-      '-i', mp3Path,
-      '-vn',
+      '-re', '-hide_banner', '-loglevel', 'warning',
+      '-i', mp3Path, '-vn',
       '-metadata', `title=${title}`,
-      '-c:a', 'copy',
-      '-content_type', 'audio/mpeg',
-      '-f', 'mp3',
-      icecastUrl()
+      '-c:a', 'copy', '-content_type', 'audio/mpeg',
+      '-f', 'mp3', icecastUrl()
     ];
     console.log('Launching ffmpeg with args:', ffargs.join(' '));
     const ff = spawn('ffmpeg', ffargs, { stdio: ['ignore', 'inherit', 'inherit'] });
 
-    ff.on('error', e => { console.error('ffmpeg error:', e?.message || e); resolve(); });
+    ff.on('error', (e) => { console.error('ffmpeg error:', e?.message || e); resolve(); });
     ff.on('exit', (code, sig) => { console.log(`ffmpeg exited ${code || ''} ${sig || ''}`); resolve(); });
   });
 }
@@ -303,10 +310,11 @@ function loadQueue() {
   const pl = process.env.YOUTUBE_PLAYLIST;
   if (pl) arr.push(pl);
   if (fs.existsSync(SOURCES_FILE)) {
-    const lines = fs.readFileSync(SOURCES_FILE, 'utf8').split(/\r?\n/).map(l => l.trim()).filter(Boolean).filter(l => !l.startsWith('#'));
+    const lines = fs.readFileSync(SOURCES_FILE, 'utf8')
+      .split(/\r?\n/).map(l => l.trim()).filter(Boolean).filter(l => !l.startsWith('#'));
     arr.push(...lines);
   }
-  if (arr.length === 0) {
+  if (!arr.length) {
     console.error('No sources found in', SOURCES_FILE, 'and no YOUTUBE_PLAYLIST set. Exiting.');
     process.exit(1);
   }
@@ -329,10 +337,7 @@ async function mainLoop() {
     try {
       const q = loadQueue();
       shuffle(q);
-      for (let i = 0; i < q.length && !stopping; i++) {
-        console.log(`Queue item ${i+1}/${q.length}: ${q[i]}`);
-        await playUrl(q[i]);
-      }
+      for (let i = 0; i < q.length && !stopping; i++) await playUrl(q[i]);
       await new Promise(r => setTimeout(r, 1000));
     } catch (e) {
       console.error('Main loop error:', e?.message || e);
@@ -348,9 +353,7 @@ async function updateListenersPeriodically() {
     try {
       const n = await fetchIcecastListeners();
       lastKnownListeners = (n !== null && typeof n === 'number') ? n : null;
-    } catch {
-      lastKnownListeners = null;
-    }
+    } catch { lastKnownListeners = null; }
     await new Promise(r => setTimeout(r, 10000));
   }
 }
@@ -364,18 +367,30 @@ const server = http.createServer((req, res) => {
       bitrate: bitrateNum,
       listeners: lastKnownListeners,
       updated: nowPlayingUpdated || Date.now(),
-      yt: lastYtOutput || {}
+      yt: lastYtOutput
     };
-    res.writeHead(200, { 'Content-Type': 'text/html' });
-    res.end(`
-      <html>
-        <head><title>${STATION_NAME} Status</title></head>
-        <body>
-          <h1>${STATION_NAME} Status</h1>
-          <pre>${JSON.stringify(payload, null, 2)}</pre>
-        </body>
-      </html>
-    `);
+    res
+    .writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(payload, null, 2));
+  } else if (req.url === '/status/html') {
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    let htmlContent = `<h1>${STATION_NAME} Status</h1>`;
+    htmlContent += `<p>Now Playing: ${nowPlaying || 'None'}</p>`;
+    htmlContent += `<p>Bitrate: ${BITRATE}</p>`;
+    htmlContent += `<p>Listeners: ${lastKnownListeners ?? 0}</p>`;
+    htmlContent += `<p>Updated: ${new Date(nowPlayingUpdated || Date.now()).toLocaleString()}</p>`;
+    if (lastYtOutput) {
+      htmlContent += `<h2>YouTube Info</h2>`;
+      htmlContent += `<p>Last URL: <a href="${lastYtOutput.last_url}" target="_blank">${lastYtOutput.last_url}</a></p>`;
+      if (lastYtOutput.raw_json) {
+        htmlContent += `<pre>${JSON.stringify(lastYtOutput.raw_json, null, 2)}</pre>`;
+      } else if (lastYtOutput.raw_html) {
+        htmlContent += `<pre>${escapeHtml(lastYtOutput.raw_html)}</pre>`;
+      } else if (lastYtOutput.error) {
+        htmlContent += `<p style="color:red">Error: ${escapeHtml(lastYtOutput.error)}</p>`;
+      }
+    }
+    res.end(htmlContent);
   } else if (req.url === '/' || req.url === '/health') {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
     res.end('ok');
@@ -385,11 +400,20 @@ const server = http.createServer((req, res) => {
   }
 });
 
+function escapeHtml(unsafe) {
+  return unsafe
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
 server.listen(PORT, () => {
-  console.log(`Status server listening on port ${PORT} (GET /status)`);
+  console.log(`Status server listening on port ${PORT} (GET /status or /status/html)`);
 });
 
-// Kick off
+// Kick off loops
 updateListenersPeriodically().catch(() => {});
 mainLoop().catch(err => {
   console.error('Fatal:', err);
