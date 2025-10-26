@@ -95,6 +95,7 @@ function sanitizeForFfmpeg(str) {
     return str
       .replace(/[\/\\|&<>:"*?]/g, '-')   // replace / \ | & < > : " * ? with dash
       .replace(/\s{2,}/g, ' ')           // collapse multiple spaces
+      .replace(/^-+|-+$/g, '')           // remove leading/trailing dashes
       .trim();
   }
 
@@ -252,7 +253,7 @@ function fetchIcecastListeners() {
 }
 
 function escapeRegExp(string) {
-  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return string.replace(/[.*+?^${}()||[\]\\]/g, '\\$&');
 }
 
 // ---- Playback logic ----
