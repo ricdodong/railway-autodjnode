@@ -129,7 +129,7 @@ function runCmdDetached(cmd, args, opts = {}) {
 // ---- yt-dlp & ffmpeg helpers ----
 async function fetchYtMeta(url) {
   ytStatus.last_url = url;
-  const args = ['-j', '--no-warnings --cookies="/app/secrets/cookies.txt"', url];
+  const args = ['-j', '--no-warnings --cookies /app/secrets/cookies.txt', url];
   if (fs.existsSync(COOKIES_PATH)) args.unshift('--cookies', COOKIES_PATH);
   ytStatus.command = `yt-dlp ${args.join(' ')}`;
   try {
