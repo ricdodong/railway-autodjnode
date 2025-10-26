@@ -1,5 +1,5 @@
 /**
- * index.js — AutoDJ with status endpoint (playlist expansion)
+ * index.js — AutoDJ with status endpoint
  *
  * Features:
  *  - sources.txt playlist (one URL per line, '#' for comments)
@@ -184,6 +184,7 @@ function updateIcecastMetadata(nowPlayingTitle) {
   });
 }
 
+// Fetch listener count
 function fetchIcecastListeners() {
   return new Promise((resolve) => {
     try {
@@ -209,19 +210,25 @@ function fetchIcecastListeners() {
             const match = data.match(regex);
             if (!match) {
               const alt = data.match(/<listeners>\s*(\d+)\s*<\/listeners>/i);
-              resolve(alt ? parseInt(alt[1], 10) : null);
+              if (alt) resolve(parseInt(alt[1], 10));
+              else resolve(null);
               return;
             }
             const sourceBlock = match[1];
             const lis = sourceBlock.match(/<listeners>\s*(\d+)\s*<\/listeners>/i);
-            resolve(lis ? parseInt(lis[1], 10) : null);
-          } catch (err) { resolve(null); }
+            if (lis) resolve(parseInt(lis[1], 10));
+            else resolve(null);
+          } catch {
+            resolve(null);
+          }
         });
       });
       req.on('error', () => resolve(null));
       req.on('timeout', () => { req.destroy(); resolve(null); });
       req.end();
-    } catch (e) { resolve(null); }
+    } catch {
+      resolve(null);
+    }
   });
 }
 
@@ -229,70 +236,9 @@ function escapeRegExp(string) {
   return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-// ---- Playlist expansion ----
-async function expandPlaylist(url) {
-  try {
-    const args = ['--flat-playlist', '-j', url];
-    if (fs.existsSync(COOKIES_PATH)) args.unshift('--cookies', COOKIES_PATH);
-    const res = await runCmdCapture('yt-dlp', args);
-    const lines = res.out.split(/\r?\n/).filter(Boolean);
-    const videoUrls = lines.map(line => {
-      try { const obj = JSON.parse(line); return obj.url ? 'https://www.youtube.com/watch?v=' + obj.url : null; }
-      catch { return null; }
-    }).filter(Boolean);
-    return videoUrls;
-  } catch (e) {
-    console.error('Playlist expansion failed:', e.message || e);
-    return [url];
-  }
-}
-
-async function loadQueue() {
-  let arr = [];
-  const pl = process.env.YOUTUBE_PLAYLIST;
-  if (pl) arr.push(pl);
-
-  if (fs.existsSync(SOURCES_FILE)) {
-    const lines = fs.readFileSync(SOURCES_FILE, 'utf8')
-      .split(/\r?\n/)
-      .map(l => l.trim())
-      .filter(Boolean)
-      .filter(l => !l.startsWith('#'));
-    arr.push(...lines);
-  }
-
-  if (arr.length === 0) {
-    console.error('No sources found in', SOURCES_FILE, 'and no YOUTUBE_PLAYLIST set. Exiting.');
-    process.exit(1);
-  }
-
-  const expanded = [];
-  for (let url of arr) {
-    if (url.includes('youtube.com/playlist?')) {
-      const vids = await expandPlaylist(url);
-      expanded.push(...vids);
-    } else {
-      expanded.push(url);
-    }
-  }
-
-  return expanded;
-}
-
-function shuffle(arr) {
-  for (let i = arr.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [arr[i], arr[j]] = [arr[j], arr[i]];
-  }
-}
-
-let stopping = false;
-process.on('SIGINT', () => { console.log('SIGINT'); stopping = true; });
-process.on('SIGTERM', () => { console.log('SIGTERM'); stopping = true; });
-
 // ---- Playback logic ----
 async function ensureCachedMp3ForUrl(url) {
-  const meta = await fetchYtMeta(url).catch(err => { throw err; });
+  const meta = await fetchYtMeta(url);
   const rawTitle = meta.title || meta.fulltitle || 'unknown';
   const clean = cleanTitle(rawTitle);
   let human = clean;
@@ -305,33 +251,23 @@ async function ensureCachedMp3ForUrl(url) {
   const id = meta.id || ('yt-' + Date.now());
   const tmpFile = await downloadToTmp(url, id);
   await convertToMp3(tmpFile, cachePath);
-  try { fs.unlinkSync(tmpFile); } catch (e) {}
+  try { fs.unlinkSync(tmpFile); } catch {}
   return { cached: false, path: cachePath, title: human };
 }
 
 async function streamCachedMp3ToIcecast(mp3Path, title) {
   nowPlaying = title;
   nowPlayingUpdated = Date.now();
-
-  updateIcecastMetadata(title).then(ok => {
-    console.log(ok ? 'Icecast metadata updated (admin).' : 'Icecast metadata admin update failed.');
-  });
-
+  updateIcecastMetadata(title).then(ok => console.log(ok ? 'Icecast metadata updated.' : 'Icecast update failed.'));
   return new Promise((resolve) => {
     const ffargs = [
-      '-re', '-hide_banner', '-loglevel', 'warning',
-      '-i', mp3Path,
-      '-vn',
-      '-metadata', `title=${title}`,
-      '-c:a', 'copy',
-      '-content_type', 'audio/mpeg',
-      '-f', 'mp3',
-      icecastUrl()
+      '-re','-hide_banner','-loglevel','warning','-i',mp3Path,'-vn','-metadata',`title=${title}`,
+      '-c:a','copy','-content_type','audio/mpeg','-f','mp3', icecastUrl()
     ];
     console.log('Launching ffmpeg with args:', ffargs.join(' '));
-    const ff = spawn('ffmpeg', ffargs, { stdio: ['ignore', 'inherit', 'inherit'] });
-    ff.on('error', (e) => { console.error('ffmpeg error:', e.message || e); resolve(); });
-    ff.on('exit', (code, sig) => { console.log(`ffmpeg exited ${code || ''} ${sig || ''}`); resolve(); });
+    const ff = spawn('ffmpeg', ffargs, { stdio: ['ignore','inherit','inherit'] });
+    ff.on('error', e => { console.error('ffmpeg error:', e && e.message ? e.message : e); resolve(); });
+    ff.on('exit', () => resolve());
   });
 }
 
@@ -342,63 +278,79 @@ async function playUrl(url) {
     console.log('Now playing:', info.title);
     await streamCachedMp3ToIcecast(info.path, info.title);
   } catch (err) {
-    console.error('playUrl error:', err.message || err);
+    console.error('playUrl error:', err && err.message ? err.message : err);
     await new Promise(r => setTimeout(r, 4000));
   }
 }
 
-// ---- Main loop ----
-async function mainLoop() {
-  while (!stopping) {
-    try {
-      const q = await loadQueue();
-      shuffle(q);
-      for (let i = 0; i < q.length && !stopping; i++) {
-        console.log(`Queue item ${i+1}/${q.length}: ${q[i]}`);
-        await playUrl(q[i]);
+// ---- Queue loader with safe playlist expansion ----
+function loadQueue() {
+  const arr = [];
+  const pl = process.env.YOUTUBE_PLAYLIST;
+  if (pl) arr.push(pl);
+
+  if (fs.existsSync(SOURCES_FILE)) {
+    const lines = fs.readFileSync(SOURCES_FILE, 'utf8')
+      .split(/\r?\n/).map(l => l.trim()).filter(Boolean).filter(l => !l.startsWith('#'));
+
+    const videoUrls = lines.map(line => {
+      try {
+        const obj = JSON.parse(line);
+        if (!obj.url) return null;
+        if (obj.url.startsWith('http')) return obj.url;
+        return 'https://www.youtube.com/watch?v=' + obj.url;
+      } catch {
+        return line;
       }
-      await new Promise(r => setTimeout(r, 1000));
-    } catch (e) {
-      console.error('Main loop error:', e.message || e);
-      await new Promise(r => setTimeout(r, 5000));
-    }
+    }).filter(Boolean);
+
+    arr.push(...videoUrls);
+  }
+
+  if (!arr.length) {
+    console.error('No sources found in', SOURCES_FILE, 'and no YOUTUBE_PLAYLIST set. Exiting.');
+    process.exit(1);
+  }
+  return arr;
+}
+
+function shuffle(arr) { for (let i=arr.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1));[arr[i],arr[j]]=[arr[j],arr[i]]; } }
+
+let stopping = false;
+process.on('SIGINT',()=>{console.log('SIGINT');stopping=true;});
+process.on('SIGTERM',()=>{console.log('SIGTERM');stopping=true;});
+
+async function mainLoop() {
+  while(!stopping){
+    try{
+      const q=loadQueue();
+      shuffle(q);
+      for(let i=0;i<q.length&&!stopping;i++){console.log(`Queue item ${i+1}/${q.length}: ${q[i]}`);await playUrl(q[i]);}
+      await new Promise(r=>setTimeout(r,1000));
+    }catch(e){console.error('Main loop error:', e && e.message ? e.message : e);await new Promise(r=>setTimeout(r,5000));}
   }
   console.log('Stopped main loop.');
 }
 
 // ---- Status server ----
-async function updateListenersPeriodically() {
-  while (!stopping) {
-    try { lastKnownListeners = await fetchIcecastListeners(); } catch { lastKnownListeners = null; }
-    await new Promise(r => setTimeout(r, 10000));
+async function updateListenersPeriodically(){
+  while(!stopping){
+    try{ const n=await fetchIcecastListeners(); lastKnownListeners=(n!==null&&typeof n==='number')?n:null; }catch{ lastKnownListeners=null; }
+    await new Promise(r=>setTimeout(r,10000));
   }
 }
 
-const server = http.createServer((req, res) => {
-  if (req.url === '/status' || req.url === '/status/') {
-    const bitrateNum = parseInt(BITRATE.replace(/\D/g, ''), 10) || 128;
-    const payload = {
-      station: STATION_NAME,
-      now_playing: nowPlaying || null,
-      bitrate: bitrateNum,
-      listeners: lastKnownListeners,
-      updated: nowPlayingUpdated || Date.now()
-    };
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify(payload));
-  } else if (req.url === '/' || req.url === '/health') {
-    res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end('ok');
-  } else {
-    res.writeHead(404, { 'Content-Type': 'text/plain' });
-    res.end('Not found');
-  }
+const server=http.createServer((req,res)=>{
+  if(req.url==='/status'||req.url==='/status/'){
+    const bitrateNum=parseInt(BITRATE.replace(/\D/g,''),10)||128;
+    const payload={station:STATION_NAME,now_playing:nowPlaying||null,bitrate:bitrateNum,listeners:lastKnownListeners,updated:nowPlayingUpdated||Date.now()};
+    res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify(payload));
+  }else if(req.url==='/'||req.url==='/health'){res.writeHead(200,{'Content-Type':'text/plain'});res.end('ok');}
+  else{res.writeHead(404,{'Content-Type':'text/plain'});res.end('Not found');}
 });
 
-server.listen(PORT, () => {
-  console.log(`Status server listening on port ${PORT} (GET /status)`);
-});
+server.listen(PORT,()=>{console.log(`Status server listening on port ${PORT} (GET /status)`);});
 
 // Kick off
-updateListenersPeriodically().catch(() => {});
-mainLoop().catch(err => { console.error('Fatal:', err); process.exit(1); });
+updateListenersPeriodically().catch(()=>{});
+mainLoop().catch(err=>{console.error('Fatal:',err);process.exit(1);});
