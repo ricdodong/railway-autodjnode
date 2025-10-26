@@ -282,6 +282,10 @@ async function streamCachedMp3ToIcecast(mp3Path, title) {
     else console.log('Icecast metadata admin update not allowed or failed.');
   });
 
+  // Escape quotes for ffmpeg
+  const safeTitle = title.replace(/"/g, '\\"');
+  const safeArtist = STATION_NAME.replace(/"/g, '\\"');
+
   return new Promise((resolve) => {
     const ffargs = [
         '-re',
@@ -289,8 +293,8 @@ async function streamCachedMp3ToIcecast(mp3Path, title) {
         '-loglevel', 'warning',
         '-i', mp3Path, // quote if needed
         '-vn',
-        '-metadata', `title=${title.replace(/"/g, '\\"')}`,
-        '-metadata', `artist=${STATION_NAME.replace(/"/g, '\\"')}`,
+        '-metadata', `title="${safeTitle}"`,
+        '-metadata', `artist="${safeArtist}"`,
         '-c:a', 'copy',
         '-content_type', 'audio/mpeg',
         '-f', 'mp3',
