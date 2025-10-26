@@ -21,7 +21,7 @@ COPY . .
 
 # Copy entrypoint and ensure executable
 COPY entrypoint.sh /app/entrypoint.sh
-RUN chmod +x /entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
 # Location of cookies file (used by yt-dlp + index.js)
 ENV COOKIES_PATH="/app/secrets/cookies.txt"
 
