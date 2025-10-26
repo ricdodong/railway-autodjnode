@@ -3,11 +3,11 @@ const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
-const ICECAST_HOST = process.env.ICECAST_HOST || 'interchange.proxy.rlwy.net';
-const ICECAST_PORT = process.env.ICECAST_PORT || '41091';
-const ICECAST_MOUNT = process.env.ICECAST_MOUNT || '/live';
+const ICECAST_HOST = process.env.ICECAST_HOST || 'yourdomain.com';
+const ICECAST_PORT = process.env.ICECAST_PORT || '8000';
+const ICECAST_MOUNT = process.env.ICECAST_MOUNT || '/stream';
 const ICECAST_USER = process.env.ICECAST_USER || 'source';
-const ICECAST_PASS = process.env.ICECAST_PASS || 'ricalgen127';
+const ICECAST_PASS = process.env.ICECAST_PASS || 'changeme';
 const BITRATE = process.env.BITRATE || '128k';
 
 const SOURCES_FILE = process.env.SOURCES_FILE || 'sources.txt';
