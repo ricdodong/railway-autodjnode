@@ -1,6 +1,3 @@
-[build]
-builder = "docker"
-
 [deploy]
 startCommand = "npm start"
 restartPolicyType = "on-failure"
