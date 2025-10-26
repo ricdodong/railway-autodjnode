@@ -291,6 +291,7 @@ async function streamCachedMp3ToIcecast(mp3Path, title) {
         '-vn',
         '-metadata', `title=${title.replace(/"/g, '\\"')}`,
         '-metadata', `artist=${STATION_NAME.replace(/"/g, '\\"')}`,
+
         '-c:a', 'copy',
         '-content_type', 'audio/mpeg',
         '-f', 'mp3',
