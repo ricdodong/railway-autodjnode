@@ -284,17 +284,18 @@ async function streamCachedMp3ToIcecast(mp3Path, title) {
 
   return new Promise((resolve) => {
     const ffargs = [
-      '-re',
-      '-hide_banner',
-      '-loglevel', 'warning',
-      '-i', mp3Path,
-      '-vn',
-      '-metadata', `title=${title}`,
-      '-c:a', 'copy',
-      '-content_type', 'audio/mpeg',
-      '-f', 'mp3',
-      icecastUrl()
-    ];
+        '-re',
+        '-hide_banner',
+        '-loglevel', 'warning',
+        '-i', mp3Path,
+        '-vn',
+        '-metadata', `title=${title}`,
+        '-metadata', `artist=AutoDJ Live`,
+        '-c:a', 'copy',
+        '-content_type', 'audio/mpeg',
+        '-f', 'mp3',
+        icecastUrl()
+      ];
     console.log('Launching ffmpeg with args:', ffargs.join(' '));
     const ff = spawn('ffmpeg', ffargs, { stdio: ['ignore', 'inherit', 'inherit'] });
 
