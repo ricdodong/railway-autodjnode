@@ -272,49 +272,49 @@ async function ensureCachedMp3ForUrl(url) {
 }
 
 async function streamCachedMp3ToIcecast(mp3Path, title) {
-  // update globals
-  nowPlaying = title;
-  nowPlayingUpdated = Date.now();
-
-  // try to update icecast metadata via admin
-  updateIcecastMetadata(title).then(ok => {
-    if (ok) console.log('Icecast metadata updated (admin).');
-    else console.log('Icecast metadata admin update not allowed or failed.');
-  });
-
-  // Escape quotes for ffmpeg
-  const safeTitle = title.replace(/"/g, '\\"');
-  const safeArtist = STATION_NAME.replace(/"/g, '\\"');
-
-  return new Promise((resolve) => {
+    nowPlaying = title;
+    nowPlayingUpdated = Date.now();
+  
+    updateIcecastMetadata(title).then(ok => {
+      if (ok) console.log('Icecast metadata updated (admin).');
+      else console.log('Icecast metadata admin update not allowed or failed.');
+    });
+  
+    // Escape quotes for ffmpeg
+    const safeTitle = title.replace(/"/g, '\\"');
+    const safeArtist = STATION_NAME.replace(/"/g, '\\"');
+  
+    // Wrap paths in quotes
     const ffargs = [
-        '-re',
-        '-hide_banner',
-        '-loglevel', 'warning',
-        '-i', mp3Path, // quote if needed
-        '-vn',
-        '-metadata', `title="${safeTitle}"`,
-        '-metadata', `artist="${safeArtist}"`,
-        '-c:a', 'copy',
-        '-content_type', 'audio/mpeg',
-        '-f', 'mp3',
-        icecastUrl()
-      ];
-      
+      '-re',
+      '-hide_banner',
+      '-loglevel', 'warning',
+      '-i', mp3Path, // input path should be quoted if contains spaces
+      '-vn',
+      '-metadata', `title="${safeTitle}"`,
+      '-metadata', `artist="${safeArtist}"`,
+      '-c:a', 'copy',
+      '-content_type', 'audio/mpeg',
+      '-f', 'mp3',
+      icecastUrl()
+    ];
+  
     console.log('Launching ffmpeg with args:', ffargs.join(' '));
-    const ff = spawn('ffmpeg', ffargs, { stdio: ['ignore', 'inherit', 'inherit'] });
-
-    ff.on('error', (e) => {
-      console.error('ffmpeg error:', e && e.message ? e.message : e);
-      resolve();
+  
+    return new Promise((resolve) => {
+      const ff = spawn('ffmpeg', ffargs, { stdio: ['ignore', 'inherit', 'inherit'] });
+  
+      ff.on('error', (e) => {
+        console.error('ffmpeg error:', e && e.message ? e.message : e);
+        resolve();
+      });
+      ff.on('exit', (code, sig) => {
+        console.log(`ffmpeg exited ${code || ''} ${sig || ''}`);
+        resolve();
+      });
     });
-    ff.on('exit', (code, sig) => {
-      console.log(`ffmpeg exited ${code || ''} ${sig || ''}`);
-      resolve();
-    });
-  });
-}
-
+  }
+  
 // Main per-track play function: ensure cache, then stream
 async function playUrl(url) {
   try {
