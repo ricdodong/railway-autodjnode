@@ -1,19 +1,13 @@
-FROM node:20-bullseye
+FROM node:20-slim
 
-RUN apt-get update && apt-get install -y \
-    ffmpeg \
-    python3 \
-    python3-pip \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN pip3 install yt-dlp
+# Install dependencies (yt-dlp + ffmpeg)
+RUN apt-get update && apt-get install -y ffmpeg python3 python3-pip \
+    && pip3 install yt-dlp \
+    && apt-get clean
 
 WORKDIR /app
-COPY package.json package.json
-COPY index.js index.js
-COPY sources.txt sources.txt
-
-# Ensure cache & tmp exist
-RUN mkdir -p /app/cache /app/tmp
+COPY package*.json ./
+RUN npm install
+COPY . .
 
 CMD ["npm", "start"]
