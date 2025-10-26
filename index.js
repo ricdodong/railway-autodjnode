@@ -7,7 +7,7 @@
  *  - convert once (yt-dlp -> tmp -> ffmpeg -> mp3 cache)
  *  - stream cached mp3 to Icecast via ffmpeg (copy mode, -re)
  *  - update Icecast metadata via admin endpoint (best-effort)
- *  - /status endpoint on PORT (default 3000) returning now_playing, bitrate, listeners
+ *  - /status endpoint on PORT (default 3000) returning now_playing, bitrate, listeners, and yt-dlp output
  *
  * ENV:
  *   ICECAST_HOST, ICECAST_PORT, ICECAST_MOUNT, ICECAST_USER, ICECAST_PASS (or ICECAST_PASSWORD)
@@ -61,7 +61,8 @@ if (!fs.existsSync(TMP_DIR)) fs.mkdirSync(TMP_DIR, { recursive: true });
 let nowPlaying = null;          // "Artist - Title" string
 let nowPlayingUpdated = null;   // timestamp ms
 let lastKnownListeners = null;  // integer or null
-let ytAuthState = 'Unknown';    // <-- added: track yt-dlp auth/debug state
+let lastYtOutput = null;        // raw stdout/stderr of last yt-dlp attempt
+let lastAttemptedUrl = null;    // last URL we tried to fetch
 
 // ---- Utilities ----
 function sanitizeFilename(name) {
@@ -119,22 +120,15 @@ function runCmdDetached(cmd, args, opts = {}) {
 
 // ---- yt-dlp & ffmpeg helpers ----
 async function fetchYtMeta(url) {
+  lastAttemptedUrl = url;
   try {
     const args = ['-j', '--no-warnings', url];
     if (fs.existsSync(COOKIES_PATH)) args.unshift('--cookies', COOKIES_PATH);
     const res = await runCmdCapture('yt-dlp', args);
-
-    // <-- detect HTML login instead of JSON
-    if (res.out.includes('</html>')) {
-      ytAuthState = 'HTML (login page)';
-      return null;
-    }
-
-    const meta = JSON.parse(res.out);
-    ytAuthState = 'JSON (ok)';
-    return meta;
+    lastYtOutput = res.out;   // store raw output
+    return JSON.parse(res.out);
   } catch (e) {
-    ytAuthState = 'Invalid JSON';
+    lastYtOutput = e.out || lastYtOutput || e.message || String(e);
     throw new Error('yt-dlp metadata fetch failed: ' + (e.message || e));
   }
 }
@@ -195,7 +189,6 @@ function updateIcecastMetadata(nowPlayingTitle) {
   });
 }
 
-// Fetch listener count from /admin/stats (XML) and parse
 function fetchIcecastListeners() {
   return new Promise((resolve) => {
     try {
@@ -222,8 +215,7 @@ function fetchIcecastListeners() {
             if (!match) {
               const alt = data.match(/<listeners>\s*(\d+)\s*<\/listeners>/i);
               if (alt) {
-                const n = parseInt(alt[1], 10);
-                resolve(n);
+                resolve(parseInt(alt[1], 10));
               } else {
                 resolve(null);
               }
@@ -231,11 +223,8 @@ function fetchIcecastListeners() {
             }
             const sourceBlock = match[1];
             const lis = sourceBlock.match(/<listeners>\s*(\d+)\s*<\/listeners>/i);
-            if (lis) {
-              resolve(parseInt(lis[1], 10));
-            } else {
-              resolve(null);
-            }
+            if (lis) resolve(parseInt(lis[1], 10));
+            else resolve(null);
           } catch (err) {
             resolve(null);
           }
@@ -254,10 +243,18 @@ function escapeRegExp(string) {
   return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+function escapeHtml(str) {
+  if (!str) return '';
+  return str.replace(/&/g,'&amp;')
+            .replace(/</g,'&lt;')
+            .replace(/>/g,'&gt;')
+            .replace(/"/g,'&quot;')
+            .replace(/'/g,'&#039;');
+}
+
 // ---- Playback logic ----
 async function ensureCachedMp3ForUrl(url) {
   const meta = await fetchYtMeta(url).catch(err => { throw err; });
-  if (!meta) throw new Error('yt-dlp returned no metadata (likely HTML login page)');
   const rawTitle = meta.title || meta.fulltitle || 'unknown';
   const clean = cleanTitle(rawTitle);
   let human = clean;
@@ -265,7 +262,9 @@ async function ensureCachedMp3ForUrl(url) {
   const safeName = sanitizeFilename(human) + '.mp3';
   const cachePath = path.join(CACHE_DIR, safeName);
 
-  if (fs.existsSync(cachePath)) return { cached: true, path: cachePath, title: human };
+  if (fs.existsSync(cachePath)) {
+    return { cached: true, path: cachePath, title: human };
+  }
 
   const id = meta.id || ('yt-' + Date.now());
   const tmpFile = await downloadToTmp(url, id);
@@ -277,6 +276,7 @@ async function ensureCachedMp3ForUrl(url) {
 async function streamCachedMp3ToIcecast(mp3Path, title) {
   nowPlaying = title;
   nowPlayingUpdated = Date.now();
+
   updateIcecastMetadata(title).then(ok => {
     if (ok) console.log('Icecast metadata updated (admin).');
     else console.log('Icecast metadata admin update not allowed or failed.');
@@ -284,20 +284,31 @@ async function streamCachedMp3ToIcecast(mp3Path, title) {
 
   return new Promise((resolve) => {
     const ffargs = [
-      '-re', '-hide_banner', '-loglevel', 'warning',
+      '-re',
+      '-hide_banner',
+      '-loglevel', 'warning',
       '-i', mp3Path,
-      '-vn', '-metadata', `title=${title}`,
-      '-c:a', 'copy', '-content_type', 'audio/mpeg', '-f', 'mp3',
+      '-vn',
+      '-metadata', `title=${title}`,
+      '-c:a', 'copy',
+      '-content_type', 'audio/mpeg',
+      '-f', 'mp3',
       icecastUrl()
     ];
     console.log('Launching ffmpeg with args:', ffargs.join(' '));
     const ff = spawn('ffmpeg', ffargs, { stdio: ['ignore', 'inherit', 'inherit'] });
-    ff.on('error', (e) => { console.error('ffmpeg error:', e?.message || e); resolve(); });
-    ff.on('exit', (code, sig) => { console.log(`ffmpeg exited ${code || ''} ${sig || ''}`); resolve(); });
+
+    ff.on('error', (e) => {
+      console.error('ffmpeg error:', e && e.message ? e.message : e);
+      resolve();
+    });
+    ff.on('exit', (code, sig) => {
+      console.log(`ffmpeg exited ${code || ''} ${sig || ''}`);
+      resolve();
+    });
   });
 }
 
-// Main per-track play function
 async function playUrl(url) {
   try {
     console.log('Preparing:', url);
@@ -305,7 +316,7 @@ async function playUrl(url) {
     console.log('Now playing:', info.title);
     await streamCachedMp3ToIcecast(info.path, info.title);
   } catch (err) {
-    console.error('playUrl error:', err?.message || err);
+    console.error('playUrl error:', err && err.message ? err.message : err);
     await new Promise(r => setTimeout(r, 4000));
   }
 }
@@ -318,12 +329,14 @@ function loadQueue() {
 
   if (fs.existsSync(SOURCES_FILE)) {
     const lines = fs.readFileSync(SOURCES_FILE, 'utf8')
-      .split(/\r?\n/).map(l => l.trim())
-      .filter(Boolean).filter(l => !l.startsWith('#'));
+      .split(/\r?\n/)
+      .map(l => l.trim())
+      .filter(Boolean)
+      .filter(l => !l.startsWith('#'));
     arr.push(...lines);
   }
 
-  if (!arr.length) {
+  if (arr.length === 0) {
     console.error('No sources found in', SOURCES_FILE, 'and no YOUTUBE_PLAYLIST set. Exiting.');
     process.exit(1);
   }
@@ -352,7 +365,7 @@ async function mainLoop() {
       }
       await new Promise(r => setTimeout(r, 1000));
     } catch (e) {
-      console.error('Main loop error:', e?.message || e);
+      console.error('Main loop error:', e && e.message ? e.message : e);
       await new Promise(r => setTimeout(r, 5000));
     }
   }
@@ -364,8 +377,11 @@ async function updateListenersPeriodically() {
   while (!stopping) {
     try {
       const n = await fetchIcecastListeners();
-      lastKnownListeners = (n !== null && typeof n === 'number') ? n : null;
-    } catch { lastKnownListeners = null; }
+      if (n !== null && typeof n === 'number') lastKnownListeners = n;
+      else lastKnownListeners = null;
+    } catch (e) {
+      lastKnownListeners = null;
+    }
     await new Promise(r => setTimeout(r, 10000));
   }
 }
@@ -379,7 +395,10 @@ const server = http.createServer((req, res) => {
       bitrate: bitrateNum,
       listeners: lastKnownListeners,
       updated: nowPlayingUpdated || Date.now(),
-      yt: { auth_state: ytAuthState } // <-- added yt auth state
+      yt: {
+        last_url: lastAttemptedUrl,
+        raw_html: lastYtOutput ? `<pre>${escapeHtml(lastYtOutput)}</pre>` : null
+      }
     };
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(payload));
