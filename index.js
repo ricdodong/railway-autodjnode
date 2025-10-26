@@ -58,49 +58,50 @@ if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
 if (!fs.existsSync(TMP_DIR)) fs.mkdirSync(TMP_DIR, { recursive: true });
 
 // ---- Globals ----
-let nowPlaying = null;          // "Artist - Title" string
-let nowPlayingUpdated = null;   // timestamp ms
-let lastKnownListeners = null;  // integer or null
+let nowPlaying = null;
+let nowPlayingUpdated = null;
+let lastKnownListeners = null;
 
 // ---- Utilities ----
 function sanitizeFilename(name) {
-    if (!name) return 'unknown';
-    return name
-      .replace(/[\/\\|&<>:"*?]/g, '-')  // replace illegal characters with dash
-      .replace(/[\u0000-\u001f]/g, '')   // remove control chars
-      .replace(/\s+/g, ' ')              // collapse multiple spaces
-      .replace(/^-+|-+$/g, '')           // trim leading/trailing dashes
-      .trim()
-      .slice(0, 200);                    // limit length
-  }
-  
-  function cleanTitle(raw) {
-    if (!raw) return raw || '';
-    let s = raw;
-    s = s.replace(/\[[^\]]*]/g, '');
-    s = s.replace(/\([^)]*\)/g, '');
-    s = s.replace(/\{[^}]*\}/g, '');
-    const noise = [
-      'official video', 'official music video', 'music video', 'lyrics', 'lyric video',
-      'hd', 'hq', 'audio', 'video', 'official', 'remastered', 'visualizer', 'clip'
-    ];
-    const patt = new RegExp('\\b(' + noise.join('|') + ')\\b', 'ig');
-    s = s.replace(patt, '');
-    s = s.replace(/\s*[-–—]\s*/g, ' - ');
-    s = s.replace(/\s{2,}/g, ' ');
-    s = s.trim();
-    return s.length ? s : raw.trim();
-  }
+  if (!name) return 'unknown';
+  return name
+    .replace(/[\/\\|&<>:"*?]/g, '-') // replace illegal chars with dash
+    .replace(/[\u0000-\u001f]/g, '')  // remove control chars
+    .replace(/\s+/g, ' ')             // collapse multiple spaces
+    .replace(/^-+|-+$/g, '')          // trim leading/trailing dashes
+    .trim()
+    .slice(0, 200);
+}
+
+function cleanTitle(raw) {
+  if (!raw) return raw || '';
+  let s = raw;
+  s = s.replace(/\[[^\]]*]/g, '');
+  s = s.replace(/\([^)]*\)/g, '');
+  s = s.replace(/\{[^}]*\}/g, '');
+  const noise = [
+    'official video', 'official music video', 'music video', 'lyrics', 'lyric video',
+    'hd', 'hq', 'audio', 'video', 'official', 'remastered', 'visualizer', 'clip'
+  ];
+  const patt = new RegExp('\\b(' + noise.join('|') + ')\\b', 'ig');
+  s = s.replace(patt, '');
+  s = s.replace(/\s*[-–—]\s*/g, ' - ');
+  s = s.replace(/\s{2,}/g, ' ');
+  s = s.trim();
+  return s.length ? s : raw.trim();
+}
 
 function sanitizeForFfmpeg(str) {
-    if (!str) return '';
-    return str
-      .replace(/[\/\\|&<>:"*?]/g, '-')   // replace / \ | & < > : " * ? with dash
-      .replace(/\s{2,}/g, ' ')           // collapse multiple spaces
-      .replace(/^-+|-+$/g, '')           // remove leading/trailing dashes
-      .trim();
-  }
+  if (!str) return '';
+  return str
+    .replace(/[\/\\|&<>:"*?]/g, '-') // replace forbidden chars with dash
+    .replace(/\s{2,}/g, ' ')
+    .replace(/^-+|-+$/g, '')
+    .trim();
+}
 
+// ---- Child process helpers ----
 function runCmdCapture(cmd, args, opts = {}) {
   return new Promise((resolve, reject) => {
     const p = spawn(cmd, args, Object.assign({ stdio: ['ignore', 'pipe', 'pipe'] }, opts));
@@ -108,7 +109,7 @@ function runCmdCapture(cmd, args, opts = {}) {
     let err = '';
     if (p.stdout) p.stdout.on('data', d => out += d.toString());
     if (p.stderr) p.stderr.on('data', d => err += d.toString());
-    p.on('error', (e) => reject(e));
+    p.on('error', e => reject(e));
     p.on('exit', (code, sig) => {
       if (code === 0) resolve({ out, err });
       else reject(new Error(`${cmd} ${args.join(' ')} exited ${code} ${sig || ''}\n${err}`));
@@ -119,7 +120,7 @@ function runCmdCapture(cmd, args, opts = {}) {
 function runCmdDetached(cmd, args, opts = {}) {
   return new Promise((resolve, reject) => {
     const p = spawn(cmd, args, Object.assign({ stdio: ['ignore', 'inherit', 'inherit'] }, opts));
-    p.on('error', (e) => reject(e));
+    p.on('error', e => reject(e));
     p.on('exit', (code, sig) => {
       if (code === 0) resolve({ code, sig });
       else reject(new Error(`${cmd} ${args.join(' ')} exited ${code} ${sig || ''}`));
@@ -127,7 +128,7 @@ function runCmdDetached(cmd, args, opts = {}) {
   });
 }
 
-// ---- yt-dlp & ffmpeg helpers ----
+// ---- yt-dlp & ffmpeg ----
 async function fetchYtMeta(url) {
   try {
     const args = ['-j', '--no-warnings', url];
@@ -143,7 +144,6 @@ async function downloadToTmp(url, id) {
   const outTmpl = path.join(TMP_DIR, `${id}.%(ext)s`);
   const args = ['-f', 'bestaudio', '-o', outTmpl, url];
   if (fs.existsSync(COOKIES_PATH)) args.unshift('--cookies', COOKIES_PATH);
-  // show progress to logs (inherit) so Railway logs show download activity
   await runCmdDetached('yt-dlp', args);
   const files = fs.readdirSync(TMP_DIR).filter(f => f.startsWith(id + '.'));
   if (!files.length) throw new Error('downloaded file not found in tmp');
@@ -161,13 +161,13 @@ async function convertToMp3(inputFile, outFile) {
   ]);
 }
 
-// ---- Icecast helpers ----
+// ---- Icecast ----
 function icecastUrl() {
   return `icecast://${encodeURIComponent(ICECAST_USER)}:${encodeURIComponent(ICECAST_PASS)}@${ICECAST_HOST}:${ICECAST_PORT}${ICECAST_MOUNT}`;
 }
 
 function updateIcecastMetadata(nowPlayingTitle) {
-  return new Promise((resolve) => {
+  return new Promise(resolve => {
     try {
       const song = encodeURIComponent(nowPlayingTitle || '');
       const pathStr = `/admin/metadata?mount=${encodeURIComponent(ICECAST_MOUNT)}&mode=updinfo&song=${song}`;
@@ -176,81 +176,50 @@ function updateIcecastMetadata(nowPlayingTitle) {
         port: parseInt(ICECAST_PORT || '80', 10),
         path: pathStr,
         method: 'GET',
-        headers: {
-          'Authorization': 'Basic ' + Buffer.from(`${ICECAST_ADMIN_USER}:${ICECAST_ADMIN_PASS}`).toString('base64')
-        },
+        headers: { 'Authorization': 'Basic ' + Buffer.from(`${ICECAST_ADMIN_USER}:${ICECAST_ADMIN_PASS}`).toString('base64') },
         timeout: 4000
       };
-      const useHttps = (ICECAST_PORT == '443' || ICECAST_PORT == 443);
-      const req = (useHttps ? https : http).request(opts, (res) => {
-        // drain
-        res.on('data', () => {});
-        res.on('end', () => resolve(true));
-      });
-      req.on('error', (e) => { console.warn('Icecast metadata update failed:', e.message); resolve(false); });
+      const req = (ICECAST_PORT == '443' ? https : http).request(opts, res => { res.on('data', () => {}); res.on('end', () => resolve(true)); });
+      req.on('error', e => { console.warn('Icecast metadata update failed:', e.message); resolve(false); });
       req.on('timeout', () => { req.destroy(); resolve(false); });
       req.end();
-    } catch (e) {
-      console.warn('Icecast metadata update error:', e.message);
-      resolve(false);
-    }
+    } catch (e) { console.warn('Icecast metadata update error:', e.message); resolve(false); }
   });
 }
 
-// Fetch listener count from /admin/stats (XML) and parse
+// Fetch listener count
 function fetchIcecastListeners() {
-  return new Promise((resolve) => {
+  return new Promise(resolve => {
     try {
-      const pathStr = `/admin/stats`;
       const opts = {
         hostname: ICECAST_HOST,
         port: parseInt(ICECAST_PORT || '80', 10),
-        path: pathStr,
+        path: '/admin/stats',
         method: 'GET',
-        headers: {
-          'Authorization': 'Basic ' + Buffer.from(`${ICECAST_ADMIN_USER}:${ICECAST_ADMIN_PASS}`).toString('base64')
-        },
+        headers: { 'Authorization': 'Basic ' + Buffer.from(`${ICECAST_ADMIN_USER}:${ICECAST_ADMIN_PASS}`).toString('base64') },
         timeout: 4000
       };
-      const useHttps = (ICECAST_PORT == '443' || ICECAST_PORT == 443);
-      const req = (useHttps ? https : http).request(opts, (res) => {
+      const req = (ICECAST_PORT == '443' ? https : http).request(opts, res => {
         let data = '';
         res.on('data', d => data += d.toString());
         res.on('end', () => {
           try {
-            // find <source mount="/mount"> ... <listeners>NUM</listeners>
-            const mountAttr = ICECAST_MOUNT;
-            const regex = new RegExp(`<source[^>]*mount="${escapeRegExp(mountAttr)}"[^>]*>([\\s\\S]*?)<\\/source>`, 'i');
+            const regex = new RegExp(`<source[^>]*mount="${escapeRegExp(ICECAST_MOUNT)}"[^>]*>([\\s\\S]*?)<\\/source>`, 'i');
             const match = data.match(regex);
-            if (!match) {
-              // fallback: find first <listeners> in data
-              const alt = data.match(/<listeners>\s*(\d+)\s*<\/listeners>/i);
-              if (alt) {
-                const n = parseInt(alt[1], 10);
-                resolve(n);
-              } else {
-                resolve(null);
-              }
-              return;
-            }
-            const sourceBlock = match[1];
-            const lis = sourceBlock.match(/<listeners>\s*(\d+)\s*<\/listeners>/i);
-            if (lis) {
-              resolve(parseInt(lis[1], 10));
+            if (match) {
+              const lis = match[1].match(/<listeners>\s*(\d+)\s*<\/listeners>/i);
+              resolve(lis ? parseInt(lis[1], 10) : null);
             } else {
-              resolve(null);
+              const alt = data.match(/<listeners>\s*(\d+)\s*<\/listeners>/i);
+              resolve(alt ? parseInt(alt[1], 10) : null);
             }
-          } catch (err) {
-            resolve(null);
-          }
+          } catch { resolve(null); }
         });
       });
-      req.on('error', (e) => { resolve(null); });
+      req.on('error', () => resolve(null));
       req.on('timeout', () => { req.destroy(); resolve(null); });
       req.end();
-    } catch (e) {
-      resolve(null);
-    }
+    } catch { resolve(null); }
   });
 }
 
@@ -258,10 +227,9 @@ function escapeRegExp(string) {
   return string.replace(/[.*+?^${}()||[\]\\]/g, '\\$&');
 }
 
-// ---- Playback logic ----
+// ---- Playback ----
 async function ensureCachedMp3ForUrl(url) {
-  // fetch metadata
-  const meta = await fetchYtMeta(url).catch(err => { throw err; });
+  const meta = await fetchYtMeta(url);
   const rawTitle = meta.title || meta.fulltitle || 'unknown';
   const clean = cleanTitle(rawTitle);
   let human = clean;
@@ -269,61 +237,49 @@ async function ensureCachedMp3ForUrl(url) {
   const safeName = sanitizeFilename(human) + '.mp3';
   const cachePath = path.join(CACHE_DIR, safeName);
 
-  if (fs.existsSync(cachePath)) {
-    return { cached: true, path: cachePath, title: human };
-  }
+  if (fs.existsSync(cachePath)) return { cached: true, path: cachePath, title: human };
 
-  // not cached -> download & convert
   const id = meta.id || ('yt-' + Date.now());
   const tmpFile = await downloadToTmp(url, id);
-  // convert to mp3
   await convertToMp3(tmpFile, cachePath);
-  try { fs.unlinkSync(tmpFile); } catch (e) {}
+  try { fs.unlinkSync(tmpFile); } catch {}
   return { cached: false, path: cachePath, title: human };
 }
 
 async function streamCachedMp3ToIcecast(mp3Path, title) {
-    nowPlaying = title;
-    nowPlayingUpdated = Date.now();
-  
-    updateIcecastMetadata(title).then(ok => {
-      if (ok) console.log('Icecast metadata updated (admin).');
-      else console.log('Icecast metadata admin update not allowed or failed.');
-    });
-  
-    const safeTitle = sanitizeForFfmpeg(title);
-    const safeArtist = sanitizeForFfmpeg(STATION_NAME);
-    
-    const ffargs = [
-      '-re',
-      '-hide_banner',
-      '-loglevel', 'warning',
-      '-i', mp3Path,
-      '-vn',
-      '-metadata', `title=${safeTitle}`,
-      '-metadata', `artist=${safeArtist}`,
-      '-c:a', 'copy',
-      '-content_type', 'audio/mpeg',
-      '-f', 'mp3',
-      icecastUrl()
-    ];
-     
-    console.log('Launching ffmpeg with args:', ffargs.join(' '));
-  
-    return new Promise((resolve) => {
-      const ff = spawn('ffmpeg', ffargs, { stdio: ['ignore', 'inherit', 'inherit'] });
-  
-      ff.on('error', (e) => {
-        console.error('ffmpeg error:', e && e.message ? e.message : e);
-        resolve();
-      });
-      ff.on('exit', (code, sig) => {
-        console.log(`ffmpeg exited ${code || ''} ${sig || ''}`);
-        resolve();
-      });
-    });
-  }
-// Main per-track play function: ensure cache, then stream
+  nowPlaying = title;
+  nowPlayingUpdated = Date.now();
+
+  updateIcecastMetadata(title).then(ok => {
+    console.log(ok ? 'Icecast metadata updated (admin).' : 'Icecast metadata admin update failed.');
+  });
+
+  const safeTitle = sanitizeForFfmpeg(title);
+  const safeArtist = sanitizeForFfmpeg(STATION_NAME);
+
+  const ffargs = [
+    '-re',
+    '-hide_banner',
+    '-loglevel', 'warning',
+    '-i', mp3Path,
+    '-vn',
+    '-metadata', `title=${safeTitle}`,
+    '-metadata', `artist=${safeArtist}`,
+    '-c:a', 'copy',
+    '-content_type', 'audio/mpeg',
+    '-f', 'mp3',
+    icecastUrl()
+  ];
+
+  console.log('Launching ffmpeg with args:', ffargs.join(' '));
+
+  return new Promise(resolve => {
+    const ff = spawn('ffmpeg', ffargs, { stdio: ['ignore', 'inherit', 'inherit'] });
+    ff.on('error', e => { console.error('ffmpeg error:', e.message || e); resolve(); });
+    ff.on('exit', (code, sig) => { console.log(`ffmpeg exited ${code || ''} ${sig || ''}`); resolve(); });
+  });
+}
+
 async function playUrl(url) {
   try {
     console.log('Preparing:', url);
@@ -331,31 +287,21 @@ async function playUrl(url) {
     console.log('Now playing:', info.title);
     await streamCachedMp3ToIcecast(info.path, info.title);
   } catch (err) {
-    console.error('playUrl error:', err && err.message ? err.message : err);
-    // small backoff
+    console.error('playUrl error:', err.message || err);
     await new Promise(r => setTimeout(r, 4000));
   }
 }
 
-// ---- Queue loader & main loop ----
+// ---- Queue loader & loop ----
 function loadQueue() {
   const arr = [];
-  const pl = process.env.YOUTUBE_PLAYLIST;
-  if (pl) arr.push(pl);
-
+  if (process.env.YOUTUBE_PLAYLIST) arr.push(process.env.YOUTUBE_PLAYLIST);
   if (fs.existsSync(SOURCES_FILE)) {
     const lines = fs.readFileSync(SOURCES_FILE, 'utf8')
-      .split(/\r?\n/)
-      .map(l => l.trim())
-      .filter(Boolean)
-      .filter(l => !l.startsWith('#'));
+      .split(/\r?\n/).map(l => l.trim()).filter(Boolean).filter(l => !l.startsWith('#'));
     arr.push(...lines);
   }
-
-  if (arr.length === 0) {
-    console.error('No sources found in', SOURCES_FILE, 'and no YOUTUBE_PLAYLIST set. Exiting.');
-    process.exit(1);
-  }
+  if (!arr.length) { console.error('No sources found. Exiting.'); process.exit(1); }
   return arr;
 }
 
@@ -367,41 +313,27 @@ function shuffle(arr) {
 }
 
 let stopping = false;
-process.on('SIGINT', () => { console.log('SIGINT'); stopping = true; });
-process.on('SIGTERM', () => { console.log('SIGTERM'); stopping = true; });
+process.on('SIGINT', () => { stopping = true; });
+process.on('SIGTERM', () => { stopping = true; });
 
 async function mainLoop() {
   while (!stopping) {
     try {
       const q = loadQueue();
       shuffle(q);
-      for (let i = 0; i < q.length && !stopping; i++) {
-        console.log(`Queue item ${i+1}/${q.length}: ${q[i]}`);
-        await playUrl(q[i]);
-      }
+      for (let i = 0; i < q.length && !stopping; i++) await playUrl(q[i]);
       await new Promise(r => setTimeout(r, 1000));
     } catch (e) {
-      console.error('Main loop error:', e && e.message ? e.message : e);
+      console.error('Main loop error:', e.message || e);
       await new Promise(r => setTimeout(r, 5000));
     }
   }
-  console.log('Stopped main loop.');
 }
 
 // ---- Status server ----
 async function updateListenersPeriodically() {
   while (!stopping) {
-    try {
-      const n = await fetchIcecastListeners();
-      if (n !== null && typeof n === 'number') {
-        lastKnownListeners = n;
-      } else {
-        lastKnownListeners = null;
-      }
-    } catch (e) {
-      lastKnownListeners = null;
-    }
-    // every 10s
+    lastKnownListeners = await fetchIcecastListeners().catch(() => null);
     await new Promise(r => setTimeout(r, 10000));
   }
 }
@@ -409,15 +341,14 @@ async function updateListenersPeriodically() {
 const server = http.createServer((req, res) => {
   if (req.url === '/status' || req.url === '/status/') {
     const bitrateNum = parseInt(BITRATE.replace(/\D/g, ''), 10) || 128;
-    const payload = {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
       station: STATION_NAME,
       now_playing: nowPlaying || null,
       bitrate: bitrateNum,
       listeners: lastKnownListeners,
       updated: nowPlayingUpdated || Date.now()
-    };
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify(payload));
+    }));
   } else if (req.url === '/' || req.url === '/health') {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
     res.end('ok');
@@ -431,9 +362,5 @@ server.listen(PORT, () => {
   console.log(`Status server listening on port ${PORT} (GET /status)`);
 });
 
-// Kick off
 updateListenersPeriodically().catch(() => {});
-mainLoop().catch(err => {
-  console.error('Fatal:', err);
-  process.exit(1);
-});
+mainLoop().catch(err => { console.error('Fatal:', err); process.exit(1); });
