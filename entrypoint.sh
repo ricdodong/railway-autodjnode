@@ -1,29 +1,17 @@
-#!/usr/bin/env sh
-set -e
+#!/bin/sh
+echo "[ENTRYPOINT] Initializing..."
 
-# Path where decoded cookies will be written
-COOKIES_PATH=${COOKIES_PATH:-/app/secrets/cookies.txt}
+# ensure dir exists
+mkdir -p /app/secrets
 
-# Ensure secrets dir exists
-mkdir -p "$(dirname "$COOKIES_PATH")"
-
-# If COOKIES_B64 is provided (base64 of a netscape cookies.txt), decode it here.
-# This avoids multiline-env corruption in Railway.
-if [ -n "$COOKIES_B64" ]; then
-  echo "$COOKIES_B64" | base64 -d > "$COOKIES_PATH" || {
-    echo "Failed to decode COOKIES_B64 to $COOKIES_PATH" >&2
-  }
+# If cookies.txt does not exist, create it
+if [ ! -f /app/secrets/cookies.txt ]; then
+  echo "[ENTRYPOINT] No cookies.txt found. Creating empty file..."
+  touch /app/secrets/cookies.txt
 fi
 
-# Backwards-compat attempt: if COOKIES_FILE exists as plain (not recommended), write it.
-# (You selected using only COOKIES_B64; this is left as a no-op unless you set COOKIES_FILE.)
-if [ -n "$COOKIES_FILE" ] && [ ! -s "$COOKIES_PATH" ]; then
-  # If COOKIES_PATH is empty and user still used COOKIES_FILE, write it (best-effort).
-  echo "$COOKIES_FILE" > "$COOKIES_PATH" || true
-fi
+echo "[ENTRYPOINT] Cookies file status:"
+ls -l /app/secrets/cookies.txt
 
-# Tight permissions
-chmod 600 "$COOKIES_PATH" || true
-
-# Execute the main process (node index.js or entrypoint command)
+echo "[ENTRYPOINT] Starting app..."
 exec "$@"
