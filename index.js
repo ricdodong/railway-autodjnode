@@ -64,31 +64,33 @@ let lastKnownListeners = null;  // integer or null
 
 // ---- Utilities ----
 function sanitizeFilename(name) {
+    if (!name) return 'unknown';
     return name
-      .replace(/[\/\\|&<>:"*?]/g, '-')  // remove special chars
-      .replace(/[\u0000-\u001f]/g, '')  // remove control chars
-      .replace(/\s+/g, ' ')
+      .replace(/[\/\\|&<>:"*?]/g, '-')  // replace illegal characters with dash
+      .replace(/[\u0000-\u001f]/g, '')   // remove control chars
+      .replace(/\s+/g, ' ')              // collapse multiple spaces
+      .replace(/^-+|-+$/g, '')           // trim leading/trailing dashes
       .trim()
-      .slice(0, 200);
+      .slice(0, 200);                    // limit length
   }
-
-function cleanTitle(raw) {
-  if (!raw) return raw || '';
-  let s = raw;
-  s = s.replace(/\[[^\]]*]/g, '');
-  s = s.replace(/\([^)]*\)/g, '');
-  s = s.replace(/\{[^}]*\}/g, '');
-  const noise = [
-    'official video', 'official music video', 'music video', 'lyrics', 'lyric video',
-    'hd', 'hq', 'audio', 'video', 'official', 'remastered', 'visualizer', 'clip'
-  ];
-  const patt = new RegExp('\\b(' + noise.join('|') + ')\\b', 'ig');
-  s = s.replace(patt, '');
-  s = s.replace(/\s*[-–—]\s*/g, ' - ');
-  s = s.replace(/\s{2,}/g, ' ');
-  s = s.trim();
-  return s.length ? s : raw.trim();
-}
+  
+  function cleanTitle(raw) {
+    if (!raw) return raw || '';
+    let s = raw;
+    s = s.replace(/\[[^\]]*]/g, '');
+    s = s.replace(/\([^)]*\)/g, '');
+    s = s.replace(/\{[^}]*\}/g, '');
+    const noise = [
+      'official video', 'official music video', 'music video', 'lyrics', 'lyric video',
+      'hd', 'hq', 'audio', 'video', 'official', 'remastered', 'visualizer', 'clip'
+    ];
+    const patt = new RegExp('\\b(' + noise.join('|') + ')\\b', 'ig');
+    s = s.replace(patt, '');
+    s = s.replace(/\s*[-–—]\s*/g, ' - ');
+    s = s.replace(/\s{2,}/g, ' ');
+    s = s.trim();
+    return s.length ? s : raw.trim();
+  }
 
 function sanitizeForFfmpeg(str) {
     if (!str) return '';
