@@ -1,7 +1,9 @@
 [deploy]
 startCommand = "npm start"
-restartPolicyType = "on-failure"
-restartPolicyMaxRetries = 10
+
+[deploy.restartPolicy]
+type = "on-failure"
+maxRetries = 10
 
 [env]
 BITRATE = "128k"
