@@ -287,16 +287,16 @@ async function streamCachedMp3ToIcecast(mp3Path, title) {
         '-re',
         '-hide_banner',
         '-loglevel', 'warning',
-        '-i', mp3Path,
+        '-i', mp3Path, // quote if needed
         '-vn',
         '-metadata', `title=${title.replace(/"/g, '\\"')}`,
         '-metadata', `artist=${STATION_NAME.replace(/"/g, '\\"')}`,
-
         '-c:a', 'copy',
         '-content_type', 'audio/mpeg',
         '-f', 'mp3',
         icecastUrl()
       ];
+      
     console.log('Launching ffmpeg with args:', ffargs.join(' '));
     const ff = spawn('ffmpeg', ffargs, { stdio: ['ignore', 'inherit', 'inherit'] });
 
