@@ -18,6 +18,9 @@ RUN npm install --omit=dev
 
 # Copy app source
 COPY . .
+COPY station-id.mp3 /app/cache/station-id.mp3
+
+COPY station-id2.mp3 /app/cache/station-id2.mp3
 
 # Copy entrypoint and ensure executable
 COPY entrypoint.sh /app/entrypoint.sh
