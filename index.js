@@ -52,7 +52,7 @@ let lastKnownListeners = null;
 function sanitizeFilename(name) {
   if (!name) return 'unknown';
   return name
-    .replace(/[\/\\|&<>:"*@'?]+/g, '-') // replace illegal chars with dash
+    .replace(/[\/\\|&<>:"*@'?]+/g, '') // replace illegal chars with dash
     .replace(/[\u0000-\u001f]/g, '')     // remove control chars
     .replace(/\s+/g, ' ')                // collapse spaces
     .replace(/^-+|-+$/g, '')             // trim leading/trailing dashes
@@ -63,7 +63,7 @@ function sanitizeFilename(name) {
 function sanitizeForFfmpeg(str) {
   if (!str) return 'unknown';
   return str
-    .replace(/[\/\\|&<>:"*@'?]+/g, '-') // replace illegal chars with dash
+    .replace(/[\/\\|&<>:"*@'?]+/g, '') // replace illegal chars with dash
     .replace(/\s+/g, ' ')
     .replace(/^-+|-+$/g, '')
     .trim();
@@ -72,9 +72,12 @@ function sanitizeForFfmpeg(str) {
 function cleanTitle(raw) {
   if (!raw) return '';
   let s = raw;
-  s = s.replace(/\[[^\]]*]/g, '')
-       .replace(/\([^)]*\)/g, '')
-       .replace(/\{[^}]*\}/g, '');
+  s = s.replace(/[\/\\|&<>:"*@'?]+/g, '') // replace illegal chars with dash
+  .replace(/[\u0000-\u001f]/g, '')     // remove control chars
+  .replace(/\s+/g, ' ')                // collapse spaces
+  .replace(/^-+|-+$/g, '')             // trim leading/trailing dashes
+  .trim()
+  .slice(0, 200);
   const noise = [
     'official video', 'official music video', 'music video', 'lyrics', 'lyric video',
     'hd', 'hq', 'audio', 'video', 'official', 'remastered', 'visualizer', 'clip'
@@ -200,8 +203,8 @@ async function updateIcecastMetadata(nowPlayingTitle) {
   return new Promise(resolve => {
     try {
       const safeTitle = sanitizeForFfmpeg(nowPlayingTitle);
-      const song = encodeURIComponent(safeTitle);
-      const pathStr = `/admin/metadata.xsl?mount=${encodeURIComponent(ICECAST_MOUNT)}&mode=updinfo&song=${song}&charset=UTF-8`;
+      const song1 = encodeURIComponent(safeTitle);
+      const pathStr = `/admin/metadata?song=${song1}&mount=${encodeURIComponent(ICECAST_MOUNT)}&mode=updinfo&charset=UTF-8`;
       const opts = {
         hostname: ICECAST_HOST,
         port: parseInt(ICECAST_PORT || '80', 10),
