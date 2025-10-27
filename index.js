@@ -166,27 +166,29 @@ function icecastUrl() {
   return `icecast://${encodeURIComponent(ICECAST_USER)}:${encodeURIComponent(ICECAST_PASS)}@${ICECAST_HOST}:${ICECAST_PORT}${ICECAST_MOUNT}`;
 }
 
-function updateIcecastMetadata(nowPlayingTitle) {
-  return new Promise(resolve => {
-    try {
-      const song = encodeURIComponent(nowPlayingTitle || '');
-      const pathStr = `/admin/metadata?mount=${encodeURIComponent(ICECAST_MOUNT)}&mode=updinfo&song=${song}`;
-      const opts = {
-        hostname: ICECAST_HOST,
-        port: parseInt(ICECAST_PORT || '80', 10),
-        path: pathStr,
-        method: 'GET',
-        headers: { 'Authorization': 'Basic ' + Buffer.from(`${ICECAST_ADMIN_USER}:${ICECAST_ADMIN_PASS}`).toString('base64') },
-        timeout: 4000
-      };
-      const req = (ICECAST_PORT == '443' ? https : http).request(opts, res => { res.on('data', () => {}); res.on('end', () => resolve(true)); });
-      req.on('error', e => { console.warn('Icecast metadata update failed:', e.message); resolve(false); });
-      req.on('timeout', () => { req.destroy(); resolve(false); });
-      req.end();
-    } catch (e) { console.warn('Icecast metadata update error:', e.message); resolve(false); }
-  });
-}
-
+async function updateIcecastMetadata(nowPlayingTitle) {
+    return new Promise(resolve => {
+      try {
+        // sanitize for Icecast (replace |, &, etc.)
+        const safeTitle = (nowPlayingTitle || '').replace(/[\/\\|&<>:"*?]+/g, '-').trim();
+        const song = encodeURIComponent(safeTitle);
+        const pathStr = `/admin/metadata?mount=${encodeURIComponent(ICECAST_MOUNT)}&mode=updinfo&song=${song}`;
+        const opts = {
+          hostname: ICECAST_HOST,
+          port: parseInt(ICECAST_PORT || '80', 10),
+          path: pathStr,
+          method: 'GET',
+          headers: { 'Authorization': 'Basic ' + Buffer.from(`${ICECAST_ADMIN_USER}:${ICECAST_ADMIN_PASS}`).toString('base64') },
+          timeout: 4000
+        };
+        const req = (ICECAST_PORT == '443' ? https : http).request(opts, res => { res.on('data', () => {}); res.on('end', () => resolve(true)); });
+        req.on('error', e => { console.warn('Icecast metadata update failed:', e.message); resolve(false); });
+        req.on('timeout', () => { req.destroy(); resolve(false); });
+        req.end();
+      } catch (e) { console.warn('Icecast metadata update error:', e.message); resolve(false); }
+    });
+  }
+  
 // Fetch listener count
 function fetchIcecastListeners() {
   return new Promise(resolve => {
