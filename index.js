@@ -49,27 +49,44 @@ let nowPlayingUpdated = null;
 let lastKnownListeners = null;
 
 // ---- Utilities ----
-// ---- Sanitize strings for filenames, FFmpeg, Icecast ----
 function sanitizeForFfmpeg(str) {
     if (!str) return 'unknown';
-    return str
-      .replace(/[\/\\|&<>:"*@'?]/g, '') // replace forbidden chars with dash
-      .replace(/\s{2,}/g, ' ')           // collapse multiple spaces
-      .replace(/^-+|-+$/g, '')           // remove leading/trailing dashes
-      .trim();
+  
+    // 1. Replace forbidden characters with dash
+    let s = str.replace(/[\/\\|&<>:"*@'?]+/g, '');
+  
+    // 2. Collapse multiple dashes into one
+    s = s.replace(/-+/g, '-');
+  
+    // 3. Collapse multiple spaces into one
+    s = s.replace(/\s+/g, ' ');
+  
+    // 4. Remove leading/trailing dashes or spaces
+    s = s.replace(/^-+/, '').replace(/-+$/, '').trim();
+  
+    return s || 'unknown';
   }
   
   // For filenames (optional)
   function sanitizeFilename(name) {
     if (!name) return 'unknown';
-    return name
-      .replace(/[\/\\|&<>:"*@'?]/g, '') // replace forbidden chars
-      .replace(/[\u0000-\u001f]/g, '')   // remove control chars
-      .replace(/\s{2,}/g, ' ')
-      .replace(/^-+|-+$/g, '')
-      .trim()
-      .slice(0, 200);                     // limit length
+  
+    // 1. Replace forbidden characters with dash
+    let s = name.replace(/[\/\\|&<>:"*@'?]+/g, '-');
+  
+    // 2. Collapse multiple dashes
+    s = s.replace(/-+/g, '-');
+  
+    // 3. Collapse multiple spaces
+    s = s.replace(/\s+/g, ' ');
+  
+    // 4. Remove leading/trailing dashes or spaces
+    s = s.replace(/^-+/, '').replace(/-+$/, '').trim();
+  
+    // 5. Limit length to 200 chars
+    return s.slice(0, 200) || 'unknown';
   }
+  
 
 function cleanTitle(raw) {
   if (!raw) return '';
