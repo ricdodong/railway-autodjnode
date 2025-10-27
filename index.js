@@ -76,7 +76,7 @@ let ytDebug = { last_url: null, command: null, stdout: null, stderr: null, error
 // ---- Utilities: sanitizers ----
 function sanitizeForFfmpeg(str) {
   if (!str) return 'unknown';
-  let s = String(str).replace(/[\/\\|&<>:\"*@'?]+/g, '-');
+  let s = String(str).replace(/[\/\\|&<>:\"*@'?]+/g, '');
   s = s.replace(/-+/g, '-');
   s = s.replace(/\s+/g, ' ');
   s = s.replace(/^-+/, '').replace(/-+$/, '').trim();
@@ -85,7 +85,7 @@ function sanitizeForFfmpeg(str) {
 
 function sanitizeFilename(name) {
   if (!name) return 'unknown';
-  let s = String(name).replace(/[\/\\|&<>:\"*@'?]+/g, '-');
+  let s = String(name).replace(/[\/\\|&<>:\"*@'?]+/g, '');
   s = s.replace(/-+/g, '-');
   s = s.replace(/\s+/g, ' ');
   s = s.replace(/^-+/, '').replace(/-+$/, '').trim();
