@@ -95,7 +95,7 @@ function cleanTitle(raw) {
 function sanitizeForFfmpeg(str) {
   if (!str) return '';
   return str
-    .replace(/[\/\\|&<>:"*?]/g, '-') // replace forbidden chars with dash
+    .replace(/[\/\\|&<>:"@*?]/g, '-') // replace forbidden chars with dash
     .replace(/\s{2,}/g, ' ')
     .replace(/^-+|-+$/g, '')
     .trim();
@@ -133,7 +133,7 @@ function runCmdDetached(cmd, args, opts = {}) {
 function sanitizeFilename(name) {
     if (!name) return 'unknown';
     return name
-      .replace(/[\/\\|&<>:"*?]/g, '-')  // replace special chars with dash
+      .replace(/[\/\\|&<>:"*@'?]/g, '-')  // replace special chars with dash
       .replace(/[\u0000-\u001f]/g, '')  // remove control chars
       .replace(/\s{2,}/g, ' ')          // collapse multiple spaces
       .trim()
@@ -143,7 +143,7 @@ function sanitizeFilename(name) {
   function sanitizeForFfmpeg(str) {
     if (!str) return 'unknown';
     return str
-      .replace(/[\/\\|&<>:"*?]/g, '-') // replace dangerous chars
+      .replace(/[\/\\|&<>:"*'?]/g, '-') // replace dangerous chars
       .replace(/\s{2,}/g, ' ')         // collapse multiple spaces
       .replace(/^-+|-+$/g, '')         // remove leading/trailing dashes
       .trim();
