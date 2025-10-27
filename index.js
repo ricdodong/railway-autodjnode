@@ -331,15 +331,16 @@ async function ensureCachedMp3ForUrl(url) {
 }
 
 async function streamCachedMp3ToIcecast(mp3Path, title) {
-  nowPlaying = title;
+    const safeTitle = sanitizeForFfmpeg(title);
+    const safeArtist = sanitizeForFfmpeg(STATION_NAME);
+  nowPlaying = safeTitle;
   nowPlayingUpdated = Date.now();
 
-  updateIcecastMetadata(title).then(ok => {
+  updateIcecastMetadata(safeTitle).then(ok => {
     console.log(ok ? 'Icecast metadata updated (admin).' : 'Icecast metadata admin update failed.');
   });
 
-  const safeTitle = sanitizeForFfmpeg(title);
-  const safeArtist = sanitizeForFfmpeg(STATION_NAME);
+
 
   const ffargs = [
     '-re',
