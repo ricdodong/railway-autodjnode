@@ -49,25 +49,27 @@ let nowPlayingUpdated = null;
 let lastKnownListeners = null;
 
 // ---- Utilities ----
-function sanitizeFilename(name) {
-  if (!name) return 'unknown';
-  return name
-    .replace(/[\/\\|&<>:"*@'?]+/g, '') // replace illegal chars with dash
-    .replace(/[\u0000-\u001f]/g, '')     // remove control chars
-    .replace(/\s+/g, ' ')                // collapse spaces
-    .replace(/^-+|-+$/g, '')             // trim leading/trailing dashes
-    .trim()
-    .slice(0, 200);
-}
-
+// ---- Sanitize strings for filenames, FFmpeg, Icecast ----
 function sanitizeForFfmpeg(str) {
-  if (!str) return 'unknown';
-  return str
-    .replace(/[\/\\|&<>:"*@'?]+/g, '') // replace illegal chars with dash
-    .replace(/\s+/g, ' ')
-    .replace(/^-+|-+$/g, '')
-    .trim();
-}
+    if (!str) return 'unknown';
+    return str
+      .replace(/[\/\\|&<>:"*@'?]/g, '') // replace forbidden chars with dash
+      .replace(/\s{2,}/g, ' ')           // collapse multiple spaces
+      .replace(/^-+|-+$/g, '')           // remove leading/trailing dashes
+      .trim();
+  }
+  
+  // For filenames (optional)
+  function sanitizeFilename(name) {
+    if (!name) return 'unknown';
+    return name
+      .replace(/[\/\\|&<>:"*@'?]/g, '') // replace forbidden chars
+      .replace(/[\u0000-\u001f]/g, '')   // remove control chars
+      .replace(/\s{2,}/g, ' ')
+      .replace(/^-+|-+$/g, '')
+      .trim()
+      .slice(0, 200);                     // limit length
+  }
 
 function cleanTitle(raw) {
   if (!raw) return '';
@@ -199,27 +201,35 @@ function icecastUrl() {
   return `icecast://${encodeURIComponent(ICECAST_USER)}:${encodeURIComponent(ICECAST_PASS)}@${ICECAST_HOST}:${ICECAST_PORT}${ICECAST_MOUNT}`;
 }
 
-async function updateIcecastMetadata(nowPlayingTitle) {
-  return new Promise(resolve => {
-    try {
-      const safeTitle = sanitizeForFfmpeg(nowPlayingTitle);
-      const song1 = encodeURIComponent(safeTitle);
-      const pathStr = `/admin/metadata?song=${song1}&mount=${encodeURIComponent(ICECAST_MOUNT)}&mode=updinfo&charset=UTF-8`;
-      const opts = {
-        hostname: ICECAST_HOST,
-        port: parseInt(ICECAST_PORT || '80', 10),
-        path: pathStr,
-        method: 'GET',
-        headers: { 'Authorization': 'Basic ' + Buffer.from(`${ICECAST_ADMIN_USER}:${ICECAST_ADMIN_PASS}`).toString('base64') },
-        timeout: 4000
-      };
-      const req = (ICECAST_PORT == '443' ? https : http).request(opts, res => { res.on('data', () => {}); res.on('end', () => resolve(true)); });
-      req.on('error', e => { console.warn('Icecast metadata update failed:', e.message); resolve(false); });
-      req.on('timeout', () => { req.destroy(); resolve(false); });
-      req.end();
-    } catch (e) { console.warn('Icecast metadata update error:', e.message); resolve(false); }
-  });
-}
+// ---- Update Icecast metadata safely ----
+async function updateIcecastMetadata(title) {
+    return new Promise(resolve => {
+      try {
+        // sanitize for Icecast (remove |, &, etc.)
+        const safeTitle = (title || '').replace(/[\/\\|&<>:"*@'?]+/g, '-').trim();
+        const song = encodeURIComponent(safeTitle);
+        const pathStr = `/admin/metadata?mount=${encodeURIComponent(ICECAST_MOUNT)}&mode=updinfo&song=${song}`;
+        const opts = {
+          hostname: ICECAST_HOST,
+          port: parseInt(ICECAST_PORT || '80', 10),
+          path: pathStr,
+          method: 'GET',
+          headers: { 'Authorization': 'Basic ' + Buffer.from(`${ICECAST_ADMIN_USER}:${ICECAST_ADMIN_PASS}`).toString('base64') },
+          timeout: 4000
+        };
+        const req = (ICECAST_PORT == '443' ? https : http).request(opts, res => {
+          res.on('data', () => {});
+          res.on('end', () => resolve(true));
+        });
+        req.on('error', e => { console.warn('Icecast metadata update failed:', e.message); resolve(false); });
+        req.on('timeout', () => { req.destroy(); resolve(false); });
+        req.end();
+      } catch (e) {
+        console.warn('Icecast metadata update error:', e.message);
+        resolve(false);
+      }
+    });
+  }
 
 function fetchIcecastListeners() {
   return new Promise(resolve => {
