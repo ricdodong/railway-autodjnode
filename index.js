@@ -230,34 +230,44 @@ function icecastUrl() {
 }
 
 // ---- Update Icecast metadata safely ----
-async function updateIcecastMetadata(title) {
+async function updateIcecastMetadata(nowPlayingTitle) {
     return new Promise(resolve => {
       try {
-        // sanitize for Icecast (remove |, &, etc.)
-        const safeTitle = (title || '').replace(/[\/\\|&<>:"*@'?]+/g, '-').trim();
+        // sanitize exactly like filenames/ffmpeg
+        const safeTitle = sanitizeForFfmpeg(nowPlayingTitle || 'unknown');
         const song = encodeURIComponent(safeTitle);
-        const pathStr = `/admin/metadata?mount=${encodeURIComponent(ICECAST_MOUNT)}&mode=updinfo&song=${song}`;
+        const pathStr = `/admin/metadata?mount=${encodeURIComponent(ICECAST_MOUNT)}&mode=updinfo&song=${song}&charset=UTF-8`;
+  
         const opts = {
           hostname: ICECAST_HOST,
           port: parseInt(ICECAST_PORT || '80', 10),
           path: pathStr,
           method: 'GET',
-          headers: { 'Authorization': 'Basic ' + Buffer.from(`${ICECAST_ADMIN_USER}:${ICECAST_ADMIN_PASS}`).toString('base64') },
+          headers: {
+            'Authorization': 'Basic ' + Buffer.from(`${ICECAST_ADMIN_USER}:${ICECAST_ADMIN_PASS}`).toString('base64')
+          },
           timeout: 4000
         };
+  
         const req = (ICECAST_PORT == '443' ? https : http).request(opts, res => {
-          res.on('data', () => {});
+          res.on('data', () => {}); // drain
           res.on('end', () => resolve(true));
         });
-        req.on('error', e => { console.warn('Icecast metadata update failed:', e.message); resolve(false); });
+  
+        req.on('error', e => { 
+          console.warn('Icecast metadata update failed:', e.message); 
+          resolve(false); 
+        });
         req.on('timeout', () => { req.destroy(); resolve(false); });
         req.end();
-      } catch (e) {
-        console.warn('Icecast metadata update error:', e.message);
-        resolve(false);
+  
+      } catch (e) { 
+        console.warn('Icecast metadata update error:', e.message); 
+        resolve(false); 
       }
     });
   }
+  
 
 function fetchIcecastListeners() {
   return new Promise(resolve => {
