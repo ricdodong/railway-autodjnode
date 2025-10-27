@@ -177,8 +177,6 @@ async function streamCachedMp3ToIcecast(mp3Path, title) {
     '-re', '-hide_banner', '-loglevel', 'warning',
     '-i', mp3Path,
     '-vn',
-    '-metadata', `title=${safeTitle}`,
-    '-metadata', `artist=${safeArtist}`,
     '-c:a', 'copy',
     '-content_type', 'audio/mpeg',
     '-f', 'mp3',
