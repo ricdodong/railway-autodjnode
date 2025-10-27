@@ -367,6 +367,34 @@ async function updateListenersPeriodically() {
   }
 }
 
+// ---- Update Icecast metadata every second ----
+let metadataInterval = null;
+
+function startMetadataUpdater() {
+  if (metadataInterval) clearInterval(metadataInterval);
+
+  metadataInterval = setInterval(() => {
+    if (nowPlaying) {
+      updateIcecastMetadata(nowPlaying).then(ok => {
+        if (ok) console.log('Icecast metadata updated (admin).');
+        else console.log('Icecast metadata update failed.');
+      });
+    }
+  }, 1000); // every 1 second
+}
+
+function stopMetadataUpdater() {
+  if (metadataInterval) clearInterval(metadataInterval);
+}
+
+// Start updater
+startMetadataUpdater();
+
+// Stop on shutdown
+process.on('SIGINT', () => { stopMetadataUpdater(); stopping = true; });
+process.on('SIGTERM', () => { stopMetadataUpdater(); stopping = true; });
+
+
 const server = http.createServer((req, res) => {
   if (req.url === '/status' || req.url === '/status/') {
     const bitrateNum = parseInt(BITRATE.replace(/\D/g, ''), 10) || 128;
