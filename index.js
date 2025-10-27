@@ -203,7 +203,7 @@ async function updateIcecastMetadata(nowPlayingTitle) {
     try {
       const safeTitle = sanitizeForFfmpeg(nowPlayingTitle);
       const song = encodeURIComponent(safeTitle);
-      const pathStr = `/admin/metadata?mount=${encodeURIComponent(ICECAST_MOUNT)}&mode=updinfo&song=${song}`;
+      const pathStr = `/admin/metadata.xsl?mount=${encodeURIComponent(ICECAST_MOUNT)}&mode=updinfo&song=${song}&charset=UTF-8`;
       const opts = {
         hostname: ICECAST_HOST,
         port: parseInt(ICECAST_PORT || '80', 10),
