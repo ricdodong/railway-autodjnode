@@ -169,32 +169,43 @@ async function ensureCachedMp3ForUrl(url) {
 }
 
 async function streamCachedMp3ToIcecast(mp3Path, title) {
-  const safeTitle = sanitizeForFfmpeg(title);
-  const safeArtist = sanitizeForFfmpeg(STATION_NAME);
-  nowPlaying = safeTitle;
-  nowPlayingUpdated = Date.now();
-
-  updateIcecastMetadata(safeTitle).then(ok =>
-    console.log(ok ? 'Icecast metadata updated.' : 'Icecast metadata update failed.')
-  );
-
-  const ffargs = [
-    '-re', '-hide_banner', '-loglevel', 'warning',
-    '-i', mp3Path,
-    '-vn',
-    '-c:a', 'copy',
-    '-content_type', 'audio/mpeg',
-    '-f', 'mp3',
-    icecastUrl()
-  ];
-
-  console.log('Launching ffmpeg with args:', ffargs.join(' '));
-  return new Promise(resolve => {
-    const ff = spawn('ffmpeg', ffargs, { stdio: ['ignore', 'inherit', 'inherit'] });
-    ff.on('error', e => { console.error('ffmpeg error:', e.message || e); resolve(); });
-    ff.on('exit', (code, sig) => { console.log(`ffmpeg exited ${code || ''} ${sig || ''}`); resolve(); });
-  });
-}
+    // Sanitize the title for both FFmpeg and Icecast
+    const safeTitle = sanitizeForFfmpeg(title);
+    const safeArtist = sanitizeForFfmpeg(STATION_NAME);
+  
+    // Update globals for /status
+    nowPlaying = safeTitle;
+    nowPlayingUpdated = Date.now();
+  
+    // Update Icecast metadata
+    updateIcecastMetadata(safeTitle).then(ok => {
+      console.log(ok ? 'Icecast metadata updated (admin).' : 'Icecast metadata admin update failed.');
+    });
+  
+    // Prepare FFmpeg arguments
+    const ffargs = [
+      '-re',
+      '-hide_banner',
+      '-loglevel', 'warning',
+      '-i', mp3Path,
+      '-vn',
+      '-metadata', `title=${safeTitle}`,
+      '-metadata', `artist=${safeArtist}`,
+      '-c:a', 'copy',
+      '-content_type', 'audio/mpeg',
+      '-f', 'mp3',
+      icecastUrl()
+    ];
+  
+    console.log('Launching ffmpeg with args:', ffargs.join(' '));
+  
+    return new Promise(resolve => {
+      const ff = spawn('ffmpeg', ffargs, { stdio: ['ignore', 'inherit', 'inherit'] });
+      ff.on('error', e => { console.error('ffmpeg error:', e.message || e); resolve(); });
+      ff.on('exit', (code, sig) => { console.log(`ffmpeg exited ${code || ''} ${sig || ''}`); resolve(); });
+    });
+  }
+  
 
 // ---- Icecast ----
 function icecastUrl() {
